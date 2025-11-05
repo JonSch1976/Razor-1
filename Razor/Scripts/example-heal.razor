@@ -1,0 +1,28 @@
+# Helper: Healing Routine
+# Called when health is low
+
+sysmsg "  -> Heal routine started" 58
+
+# Try to heal with bandages first
+if findtype 'bandage' backpack
+    sysmsg "  -> Applying bandage" 58
+    dclicktype 'bandage'
+    waitfortarget 2000
+    hotkey 'target self'
+wait 500
+    return  # Early return after bandaging
+endif
+
+# If no bandages, try heal spell
+if mana > 10
+    sysmsg "  -> Casting heal spell" 58
+    cast 'heal'
+    waitfortarget 2000
+    hotkey 'target self'
+    wait 1500
+    return  # Early return after spell
+endif
+
+# If all else fails, just wait
+sysmsg "  -> No healing available, resting..." 38
+wait 5000

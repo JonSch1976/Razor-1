@@ -155,20 +155,28 @@ namespace Assistant.Scripts
                     {
                         if (ScriptManager.Running)
                         {
-                            if (!Config.GetBool("ScriptDisablePlayFinish"))
+                            // Check if there's a call to return to
+  if (Interpreter.HasCalls)
+    {
+         // Script finished, return to caller
+           ReturnFromCall();
+         return; // Continue running the caller
+   }
+
+                        if (!Config.GetBool("ScriptDisablePlayFinish"))
+                        {
+                            if (!Config.GetBool("DisableScriptStopwatch"))
                             {
-                                if (!Config.GetBool("DisableScriptStopwatch"))
-                                {
-                                    Stopwatch.Stop();
-                                    TimeSpan elapsed = Stopwatch.Elapsed;
-                                    Stopwatch.Reset();
+                                Stopwatch.Stop();
+                                TimeSpan elapsed = Stopwatch.Elapsed;
+                                Stopwatch.Reset();
                                 
-                                    World.Player?.SendMessage(LocString.ScriptFinishedStopwatch, _queuedScriptName, elapsed.TotalMilliseconds);    
-                                }
-                                else
-                                {
-                                    World.Player?.SendMessage(LocString.ScriptFinished, _queuedScriptName);
-                                }
+                                World.Player?.SendMessage(LocString.ScriptFinishedStopwatch, _queuedScriptName, elapsed.TotalMilliseconds);    
+                            }
+                            else
+                            {
+                                World.Player?.SendMessage(LocString.ScriptFinished, _queuedScriptName);
+                            }
                                 
                             }
 
@@ -557,6 +565,69 @@ namespace Assistant.Scripts
         }
 
         private static List<RazorScript> _scriptList { get; set; }
+
+        /// <summary>
+        /// Get all available scripts
+        /// </summary>
+        public static List<RazorScript> GetAllScripts()
+        {
+            return _scriptList ?? new List<RazorScript>();
+        }
+
+        /// <summary>
+        /// Call a script as a subroutine (will return to calling script when done)
+        /// </summary>
+        public static void CallScript(string[] lines, string name)
+        {
+            if (World.Player == null || lines == null)
+                return;
+
+            if (!Client.Instance.ClientRunning)
+                return;
+
+            try
+            {
+                // Get the currently active script (if any)
+                Script currentScript = Interpreter.GetActiveScript();
+
+                // Push it onto the call stack before starting the new script
+                if (currentScript != null)
+                {
+                    Interpreter.PushCall(currentScript, _queuedScriptName ?? "Unknown");
+                }
+
+                // Parse and queue the new script
+                Script newScript = new Script(Lexer.Lex(lines));
+                _queuedScript = newScript;
+                _queuedScriptName = name;
+            }
+            catch (SyntaxError syntaxError)
+            {
+                World.Player.SendMessage(MsgLevel.Error, $"{syntaxError.Message}: '{syntaxError.Line}' (Line #{syntaxError.LineNumber + 1})");
+            }
+        }
+
+        /// <summary>
+        /// Return from a called script back to the calling script
+        /// </summary>
+        public static void ReturnFromCall()
+        {
+            if (Interpreter.HasCalls)
+            {
+                // Pop the calling script from the stack
+                Script callingScript = Interpreter.PopCall();
+
+                if (callingScript != null)
+                {
+                    // Advance past the 'call' statement so we don't call it again
+                    callingScript.Advance();
+
+                    // Queue it to resume execution
+                    _queuedScript = callingScript;
+                    _queuedScriptName = "Returning from call";
+                }
+            }
+        }
 
         public static void RedrawScriptVariables()
         {

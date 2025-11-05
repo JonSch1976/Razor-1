@@ -1,0 +1,13 @@
+# Helper Script: test-nested-level1
+# First level of nested calls
+
+sysmsg "  -> Level 1: Entered" 58
+overhead "Level 1..."
+wait 300
+
+# Call next level
+call 'test-nested-level2'
+
+sysmsg "  -> Level 1: Returned from Level 2" 58
+overhead "Back in Level 1"
+wait 300

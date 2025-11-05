@@ -1150,9 +1150,12 @@ namespace Assistant.Scripts.Engine
 
         // The current scope
         private static Scope _currentScope = _scope;
-        
+     
+    // Call stack for script subroutines
+        private static ScriptCallStack _callStack = new ScriptCallStack();
+   
         // Lists
-        private static Dictionary<string, List<Variable>> _lists = new Dictionary<string, List<Variable>>();
+    private static Dictionary<string, List<Variable>> _lists = new Dictionary<string, List<Variable>>();
 
         // Timers
         private static Dictionary<string, DateTime> _timers = new Dictionary<string, DateTime>();
@@ -1491,6 +1494,55 @@ namespace Assistant.Scripts.Engine
             return _timers.ContainsKey(name);
         }
 
+        /// <summary>
+        /// Push current script onto call stack for 'call' command
+        /// </summary>
+   public static void PushCall(Script script, string scriptName)
+ {
+            if (script != null)
+       {
+   _callStack.Push(script, scriptName);
+ }
+        }
+
+   /// <summary>
+        /// Return from called script back to calling script
+   /// </summary>
+  public static Script PopCall()
+  {
+       if (!_callStack.HasCalls)
+            {
+    return null;
+    }
+
+       var frame = _callStack.Pop();
+            if (frame != null)
+   {
+        // Return the calling script so it can be resumed
+    return frame.Script;
+      }
+          
+     return null;
+    }
+
+        /// <summary>
+        /// Get current call depth
+        /// </summary>
+        public static int CallDepth => _callStack.Depth;
+
+        /// <summary>
+      /// Check if there are calls on the stack
+        /// </summary>
+        public static bool HasCalls => _callStack.HasCalls;
+
+ /// <summary>
+        /// Get the currently active script
+        /// </summary>
+   public static Script GetActiveScript()
+        {
+ return _activeScript;
+        }
+
         public static bool StartScript(Script script)
         {
             if (_activeScript != null)
@@ -1511,19 +1563,20 @@ namespace Assistant.Scripts.Engine
             _activeScript = null;
             _currentScope = _scope;
             _executionState = ExecutionState.RUNNING;
-            
+            _callStack.Clear(); // Clear any pending calls
+   
             if (_timeoutCallback != null)
             {
                 if (_timeoutCallback())
-                {
-                    ClearTimeout();
-                }
+     {
+      ClearTimeout();
+       }
 
-                _timeoutCallback = null;
-            }
+         _timeoutCallback = null;
+   }
             
-            OnStop?.Invoke();
-        }
+      OnStop?.Invoke();
+      }
         
         public static void PauseScript()
         {

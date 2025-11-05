@@ -216,6 +216,11 @@
     <Compile Include="Core\Dress.cs" />
     <Compile Include="Core\EncodedSpeech.cs" />
     <Compile Include="Core\DamageTracker.cs" />
+    <Compile Include="Core\Logging\Logger.cs" />
+    <Compile Include="Core\Logging\LoggerExtensions.cs" />
+    <Compile Include="Core\Settings\ProfileSettings.cs" />
+    <Compile Include="Core\Settings\RazorSettings.cs" />
+    <Compile Include="Core\Settings\SettingsManager.cs" />
     <Compile Include="Core\StaffToolsManager.cs" />
     <Compile Include="Core\MessageManager.cs" />
     <Compile Include="Core\Overrides.cs" />
@@ -317,6 +322,7 @@
     <Compile Include="Agents\ScavengerAgent.cs" />
     <Compile Include="Network\PacketWriter.cs" />
     <Compile Include="Scripts\AgentCommands.cs" />
+    <Compile Include="Scripts\Engine\CallStack.cs" />
     <Compile Include="Scripts\Engine\Interpreter.cs" />
     <Compile Include="Scripts\Engine\Lexer.cs" />
     <Compile Include="Macros\MacroVariables.cs" />
@@ -645,8 +651,26 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
+    <None Include="Core\Logging\README.md" />
+    <None Include="Core\Settings\README.md" />
+    <None Include="Network\Handlers\MIGRATION_GUIDE.md" />
+    <None Include="Network\Handlers\README.md" />
     <None Include="packages.config" />
     <None Include="Razor.manifest" />
+    <None Include="Scripts\DELIVERY_SUMMARY.md" />
+    <None Include="Scripts\example-combat.razor" />
+    <None Include="Scripts\example-heal.razor" />
+    <None Include="Scripts\example-meditate.razor" />
+    <None Include="Scripts\QUICK_TEST_REFERENCE.md" />
+    <None Include="Scripts\test-call-return.razor" />
+    <None Include="Scripts\test-early-return.razor" />
+    <None Include="Scripts\test-helper.razor" />
+    <None Include="Scripts\test-nested-level1.razor" />
+    <None Include="Scripts\test-nested-level2.razor" />
+    <None Include="Scripts\test-simple-call.razor" />
+    <None Include="Scripts\test-variable-helper.razor" />
+    <None Include="Scripts\TEST_GUIDE.md" />
+    <None Include="Scripts\TEST_SUITE_SUMMARY.md" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\FastColoredTextBox\FastColoredTextBox.csproj">

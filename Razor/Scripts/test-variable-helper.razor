@@ -1,0 +1,12 @@
+# Helper Script: test-variable-helper
+# Tests that variables persist across calls
+
+if varexist 'testvar'
+    sysmsg "    -> Variable found in helper!" 58
+    overhead "Variable exists: {testvar}"
+else
+    sysmsg "    -> ERROR: Variable not found!" 38
+endif
+
+wait 500
+# Return to caller

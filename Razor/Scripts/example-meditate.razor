@@ -1,0 +1,18 @@
+# Helper: Meditation Routine
+# Called when mana is low
+
+sysmsg "  -> Meditation routine started" 58
+overhead "Meditating..."
+
+# Use meditation skill
+skill 'meditation'
+wait 1000
+
+# Wait until mana is restored
+while mana < 80
+    sysmsg "  -> Meditating... ({mana}/{maxmana})" 58
+    wait 2000
+endwhile
+
+sysmsg "  -> Mana restored!" 68
+overhead "Mana full!"

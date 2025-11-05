@@ -58,6 +58,32 @@ Description: The `break` keyword terminate the closest enclosing loop such as a 
         endfor
         ```
 
+## call
+
+Syntax: `call 'script name'`
+
+Description: The `call` keyword executes another script as a subroutine and returns to the calling script when finished. You can use `return` in the called script to return early.
+
+!!! example
+
+    === "General"
+
+        ```razor
+        // Main script
+        say 'Starting main script'
+        call 'healself'
+        say 'Returned from healself'
+        
+        // healself.razor script
+        if hp < 50
+            cast 'heal'
+            waitfortarget
+            target 'self'
+        else
+         return  // Return early if health is good
+     endif
+        ```
+
 ## continue
 
 Syntax: `continue`
@@ -169,6 +195,31 @@ Description: The `or` keyword links statements together and if one statements is
             say 'found'
         endif
         ```
+
+## return
+
+Syntax: `return`
+
+Description: The `return` keyword returns from a called script back to the calling script. If used in a script that wasn't called (top-level script), it acts like `stop`.
+
+!!! example
+
+    === "General"
+
+        ```razor
+   // Called script: healself.razor
+        if hp > 80
+            overhead 'Health is good!'
+  return  // Return early, no healing needed
+        endif
+      
+        // Continue with healing logic
+        if findtype 'bandage' backpack
+dclicktype 'bandage'
+            waitfortarget
+          target 'self'
+        endif
+```
 
 ## stop
 

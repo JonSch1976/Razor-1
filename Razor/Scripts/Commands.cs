@@ -96,10 +96,13 @@ namespace Assistant.Scripts
 
             // Script related
             Interpreter.RegisterCommandHandler("script", PlayScript);
+            Interpreter.RegisterCommandHandler("call", CallScript);
+            Interpreter.RegisterCommandHandler("return", ReturnFromCall);
             Interpreter.RegisterCommandHandler("setvar", SetVar);
             Interpreter.RegisterCommandHandler("setvariable", SetVar);
             Interpreter.RegisterCommandHandler("unsetvar", UnsetVar);
             Interpreter.RegisterCommandHandler("unsetvariable", UnsetVar);
+            Interpreter.RegisterCommandHandler("returnfromcall", ReturnFromCall);
 
             Interpreter.RegisterCommandHandler("stop", Stop);
 
@@ -1735,6 +1738,32 @@ namespace Assistant.Scripts
             ScriptManager.PlayScript(vars[0].AsString());
 
             return true;
+        }
+
+        private static bool CallScript(string command, Variable[] vars, bool quiet, bool force)
+        {
+            if (vars.Length < 1)
+                throw new RunTimeError("Usage: call 'name of script'");
+
+        string scriptName = vars[0].AsString();
+
+    foreach (RazorScript razorScript in ScriptManager.GetAllScripts())
+            {
+        if (razorScript.ToString().IndexOf(scriptName, StringComparison.OrdinalIgnoreCase) != -1)
+       {
+                ScriptManager.CallScript(razorScript.Lines, razorScript.Name);
+          return true;
+     }
+            }
+
+     CommandHelper.SendWarning(command, $"Script '{scriptName}' not found", quiet);
+          return true;
+}
+
+        private static bool ReturnFromCall(string command, Variable[] vars, bool quiet, bool force)
+        {
+            // Signal script should stop (caller will be resumed by timer)
+        return false; // false = stop current script
         }
 
         private static readonly Dictionary<string, ushort> PotionList = new Dictionary<string, ushort>()

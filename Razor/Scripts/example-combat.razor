@@ -1,0 +1,34 @@
+# Example: Real-World Combat Script with Call/Return
+# This demonstrates practical usage of call/return
+
+clearsysmsg
+sysmsg "Combat routine starting..." 88
+
+# Main combat loop
+for 50
+# Check health and call heal if needed
+    if hp < 60
+overhead "Health low - calling heal routine"
+        call 'example-heal'
+    endif
+    
+    # Check mana and call meditate if needed
+    if mana < 40
+     overhead "Mana low - calling meditation"
+      call 'example-meditate'
+    endif
+    
+    # Check for enemy and attack
+    if findtype 'mongbat' 'ground' 'true'
+        overhead "Enemy found - attacking!"
+        dclicktype 'mongbat'
+        wait 1000
+    else
+overhead "Searching for enemies..."
+     wait 2000
+    endif
+    
+    wait 500
+endfor
+
+sysmsg "Combat routine complete!" 68
