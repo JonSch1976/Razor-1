@@ -744,13 +744,9 @@ namespace Assistant.Scripts
             if (force)
             {
                 if (quiet)
-                {
                     Interpreter.ClearVariable(name);
-                }
                 else
-                {
                     Interpreter.ClearAlias(name);
-                }
             }
             else
             {
@@ -1745,25 +1741,100 @@ namespace Assistant.Scripts
             if (vars.Length < 1)
                 throw new RunTimeError("Usage: call 'name of script'");
 
-        string scriptName = vars[0].AsString();
+            string scriptName = vars[0].AsString();
+            World.Player?.SendMessage(MsgLevel.Debug, $"[CALL] Request to call script: '{scriptName}' depth={Interpreter.CallDepth}");
 
-    foreach (RazorScript razorScript in ScriptManager.GetAllScripts())
+            string Normalize(string s)
             {
-        if (razorScript.ToString().IndexOf(scriptName, StringComparison.OrdinalIgnoreCase) != -1)
-       {
-                ScriptManager.CallScript(razorScript.Lines, razorScript.Name);
-          return true;
-     }
+                if (string.IsNullOrEmpty(s)) return string.Empty;
+                var arr = new System.Text.StringBuilder(s.Length);
+                foreach (var ch in s)
+                {
+                    if (char.IsLetterOrDigit(ch)) arr.Append(char.ToLowerInvariant(ch));
+                }
+                return arr.ToString();
             }
 
-     CommandHelper.SendWarning(command, $"Script '{scriptName}' not found", quiet);
-          return true;
-}
+            string q = Normalize(scriptName);
+
+            RazorScript best = null;
+            int bestScore = -1;
+
+            foreach (RazorScript rs in ScriptManager.GetAllScripts())
+            {
+                string name = rs.Name ?? string.Empty;
+                string display = rs.ToString() ?? string.Empty;
+
+                // Highest priority: exact name match (case-insensitive)
+                if (name.Equals(scriptName, StringComparison.OrdinalIgnoreCase))
+                {
+                    best = rs; bestScore = 100; break;
+                }
+                if (display.Equals(scriptName, StringComparison.OrdinalIgnoreCase))
+                {
+                    best = rs; bestScore = 95; break;
+                }
+
+                // Next: raw substring on display/name
+                int score = -1;
+                if (display.IndexOf(scriptName, StringComparison.OrdinalIgnoreCase) >= 0) score = Math.Max(score, 80);
+                if (name.IndexOf(scriptName, StringComparison.OrdinalIgnoreCase) >= 0) score = Math.Max(score, 75);
+
+                // Next: normalized contains
+                string nameNorm = Normalize(name);
+                string displayNorm = Normalize(display);
+                if ((!string.IsNullOrEmpty(nameNorm) && nameNorm.Contains(q)) || (!string.IsNullOrEmpty(displayNorm) && displayNorm.Contains(q)))
+                {
+                    score = Math.Max(score, 60);
+                }
+
+                // Bonus: path contains user hint substrings
+                string path = rs.Path ?? string.Empty;
+                if (score >= 0 && !string.IsNullOrEmpty(path) && path.IndexOf("Mining\\New Mining", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    score += 5;
+                }
+
+                if (score > bestScore)
+                {
+                    best = rs; bestScore = score;
+                }
+            }
+
+            if (best != null)
+            {
+                int len = best.Lines?.Length ?? 0;
+                World.Player?.SendMessage(MsgLevel.Debug, $"[CALL] Found script: '{best.Name}' (len={len}) path='{best.Path}'");
+                if (len == 0)
+                {
+                    CommandHelper.SendWarning(command, $"Script '{best.Name}' is empty (0 lines).", quiet);
+                }
+                ScriptManager.CallScript(best.Lines, best.Name);
+                World.Player?.SendMessage(MsgLevel.Debug, $"[CALL] Queued '{best.Name}' for execution");
+                return true;
+            }
+
+            CommandHelper.SendWarning(command, $"Script '{scriptName}' not found", quiet);
+            // Suggest close matches to help user
+            var candidates = ScriptManager.GetAllScripts()
+                .Select(s => s.Name)
+                .Where(n => !string.IsNullOrEmpty(n) && Normalize(n).Contains(q))
+                .Distinct()
+                .Take(5)
+                .ToArray();
+            if (candidates.Length > 0)
+            {
+                World.Player?.SendMessage(MsgLevel.Info, $"Did you mean: {string.Join(", ", candidates)}");
+            }
+            return true;
+        }
 
         private static bool ReturnFromCall(string command, Variable[] vars, bool quiet, bool force)
         {
-            // Signal script should stop (caller will be resumed by timer)
-        return false; // false = stop current script
+            World.Player?.SendMessage(MsgLevel.Debug, $"[RETURN] Early return requested (depth={Interpreter.CallDepth})");
+            // End current script execution immediately; timer tick will see inactive script and pop caller
+            Interpreter.AbortCurrentScript();
+            return false; // signal no further processing of this line
         }
 
         private static readonly Dictionary<string, ushort> PotionList = new Dictionary<string, ushort>()

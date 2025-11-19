@@ -1,0 +1,95 @@
+# Subroutine to re-equip shield after using potions
+# All shield types in Ultima Online
+
+# Wooden shields
+if findtype '7026' backpack as 'shield'  # Bronze Shield
+    lift 'shield'
+    pause 1000
+drop 'self' LeftHand
+    pause 500
+    return
+elseif findtype '7027' backpack as 'shield'  # Buckler
+    lift 'shield'
+  pause 1000
+    drop 'self' LeftHand
+    pause 500
+    return
+elseif findtype '7028' backpack as 'shield'  # Kite Shield
+    lift 'shield'
+    pause 1000
+    drop 'self' LeftHand
+    pause 500
+    return
+elseif findtype '7029' backpack as 'shield'  # Wooden Shield
+    lift 'shield'
+    pause 1000
+    drop 'self' LeftHand
+    pause 500
+    return
+elseif findtype '7030' backpack as 'shield'  # Heater Shield
+    lift 'shield'
+    pause 1000
+    drop 'self' LeftHand
+    pause 500
+    return
+# Metal shields
+elseif findtype '7031' backpack as 'shield'  # Metal Shield
+    lift 'shield'
+    pause 1000
+    drop 'self' LeftHand
+    pause 500
+    return
+elseif findtype '7032' backpack as 'shield'  # Metal Kite Shield
+    lift 'shield'
+    pause 1000
+    drop 'self' LeftHand
+    pause 500
+    return
+elseif findtype '7033' backpack as 'shield'  # Tear Kite Shield
+    lift 'shield'
+    pause 1000
+    drop 'self' LeftHand
+    pause 500
+    return
+elseif findtype '7034' backpack as 'shield'  # Wooden Kite Shield
+    lift 'shield'
+    pause 1000
+    drop 'self' LeftHand
+    pause 500
+    return
+elseif findtype '7035' backpack as 'shield'  # Round Shield / Metal Shield
+    lift 'shield'
+    pause 1000
+    drop 'self' LeftHand
+    pause 500
+    return
+# Chaos & Order shields
+elseif findtype '7108' backpack as 'shield'  # Chaos Shield
+    lift 'shield'
+    pause 1000
+    drop 'self' LeftHand
+    pause 500
+    return
+elseif findtype '7109' backpack as 'shield'  # Order Shield
+    lift 'shield'
+    pause 1000
+    drop 'self' LeftHand
+  pause 500
+    return
+# Elven shields (ML expansion)
+elseif findtype '10114' backpack as 'shield'  # Elven Shield
+    lift 'shield'
+    pause 1000
+    drop 'self' LeftHand
+  pause 500
+    return
+# Virtue shields
+elseif findtype '16933' backpack as 'shield'  # Virtue Shield
+    lift 'shield'
+ pause 1000
+    drop 'self' LeftHand
+    pause 500
+    return
+endif
+
+# If no shield found, just return

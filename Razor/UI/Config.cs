@@ -341,6 +341,9 @@ namespace Assistant
             AddProperty("CooldownHeight", 28);
             AddProperty("CooldownWidth", 110);
 
+            // Added: default for script color scheme toggle (new dark syntax colors off by default)
+            AddProperty("UseOriginalScriptColors", true);
+
             Counter.Default();
             Filter.DisableAll();
             DressList.ClearAll();
@@ -664,7 +667,7 @@ namespace Assistant
             xml.WriteEndElement();
 
             xml.WriteStartElement("targetfilters");
-            TargetFilterManager.Save(xml);
+            SoundMusicManager.Save(xml);
             xml.WriteEndElement();
 
             xml.WriteStartElement("soundfilters");

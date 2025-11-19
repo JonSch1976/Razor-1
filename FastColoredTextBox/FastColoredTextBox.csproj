@@ -108,6 +108,9 @@
     <Compile Include="Ruler.Designer.cs">
       <DependentUpon>Ruler.cs</DependentUpon>
     </Compile>
+    <Compile Include="ScriptPreviewTooltip.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="SyntaxDescriptor.cs" />
     <Compile Include="SyntaxHighlighter.cs" />
     <Compile Include="ReplaceForm.cs">

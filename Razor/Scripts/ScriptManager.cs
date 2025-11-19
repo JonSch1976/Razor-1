@@ -1,19 +1,19 @@
 ﻿#region license
 // Razor: An Ultima Online Assistant
-// Copyright (c) 2022 Razor Development Community on GitHub <https://github.com/markdwags/Razor>
+// Copyright (c)2022 Razor Development Community on GitHub <https://github.com/markdwags/Razor>
 // 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
+// the Free Software Foundation, either version3 of the License, or
 // (at your option) any later version.
 // 
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 // 
 // You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
 #endregion
 
 using System;
@@ -28,73 +28,95 @@ using Assistant.Macros;
 using Assistant.Scripts.Engine;
 using Assistant.UI;
 using FastColoredTextBoxNS;
+using System.Text.RegularExpressions;
 
 namespace Assistant.Scripts
 {
     public static class ScriptManager
     {
         public static bool Recording { get; set; }
-
-        public static bool Paused => ScriptPaused;
-
         private static bool ScriptPaused { get; set; }
-
-        public static bool Running => ScriptRunning;
-
+        public static bool Paused => ScriptPaused;
         private static bool ScriptRunning { get; set; }
-
+        public static bool Running => ScriptRunning;
         public static DateTime LastWalk { get; set; }
-
         public static bool SetVariableActive { get; set; }
-        
         public static bool TargetFound { get; set; }
-
         public static string ScriptPath => Config.GetUserDirectory("Scripts");
 
         private static FastColoredTextBox ScriptEditor { get; set; }
-
         private static TreeView ScriptTree { get; set; }
-
         private static ListBox ScriptVariableList { get; set; }
-
         private static Script _queuedScript;
-
         private static string _queuedScriptName;
-
+        private static bool _isScriptCall = false; // call sequencing
+        private static AutocompleteMenu _autoCompleteMenu;
+        private static List<AutocompleteItem> _autoCompleteItems = new List<AutocompleteItem>();
         public static bool BlockPopupMenu { get; set; }
-
         private static bool EnableHighlight { get; set; }
 
-        public enum HighlightType
-        {
-            Error,
-            Execution
-        }
+        private static List<RazorScript> _scriptList { get; set; }
+        private static string _activeScriptName; // currently executing script
+        private static Stopwatch Stopwatch { get; } = new Stopwatch();
 
-        private static Dictionary<HighlightType, List<int>> HighlightLines { get; } = new Dictionary<HighlightType, List<int>>();
+        // Allow user to opt out of syntax coloring (restores "original" look)
+        private static bool UseOriginalColors => Config.GetBool("UseOriginalScriptColors");
 
-        private static Dictionary<HighlightType, Brush> HighlightLineColors { get; } = new Dictionary<HighlightType, Brush>()
+        #region Highlight state
+        public enum HighlightType { Error, Execution }
+        private static readonly Dictionary<HighlightType, List<int>> HighlightLines = new Dictionary<HighlightType, List<int>>();
+        private static readonly Dictionary<HighlightType, Brush> HighlightLineColors = new Dictionary<HighlightType, Brush>
         {
             { HighlightType.Error, new SolidBrush(Color.Red) },
             { HighlightType.Execution, new SolidBrush(Color.Blue) }
         };
+        private static HighlightType[] GetHighlightTypes() => (HighlightType[])Enum.GetValues(typeof(HighlightType));
+        #endregion
 
-        private static HighlightType[] GetHighlightTypes()
+        #region Styles (used only if UseOriginalColors == false)
+        // Razor dark theme styles
+        private static readonly Style _keywordStyle = new TextStyle(new SolidBrush(Color.FromArgb(253, 134, 30)), null, FontStyle.Regular); // keywords orange
+        private static readonly Style _commandStyle = new TextStyle(new SolidBrush(Color.FromArgb(43, 144, 175)), null, FontStyle.Regular); // commands blue
+        private static readonly Style _stringStyle = new TextStyle(new SolidBrush(Color.FromArgb(181, 241, 9)), null, FontStyle.Regular); // strings yellow/green
+        private static readonly Style _numberStyle = new TextStyle(new SolidBrush(Color.FromArgb(174, 129, 255)), null, FontStyle.Regular); // numbers purple
+        private static readonly Style _commentStyle = new TextStyle(new SolidBrush(Color.FromArgb(150, 150, 150)), null, FontStyle.Italic); // comments grey italic
+        private static readonly Style _serialStyle = new TextStyle(new SolidBrush(Color.FromArgb(249, 37, 77)), null, FontStyle.Regular); // 0x serials red
+        private static readonly Style _layerStyle = new TextStyle(new SolidBrush(Color.FromArgb(174, 129, 255)), null, FontStyle.Regular); // layer/reserved words (reuse number color)
+        private static readonly Style _expressionStyle = new TextStyle(new SolidBrush(Color.FromArgb(249, 37, 77)), null, FontStyle.Regular); // expressions red (same as serial)
+        private static readonly Style _sysmsgStyle = new TextStyle(new SolidBrush(Color.Red), null, FontStyle.Regular); // sysmsg red (legacy)
+        private static readonly Style _overheadStyle = new TextStyle(new SolidBrush(Color.Blue), null, FontStyle.Regular); // overhead blue (legacy)
+        #endregion
+
+        // Regex sets for highlighting (initialized once)
+        private static Regex _regexStrings1;
+        private static Regex _regexStrings2;
+        private static Regex _regexComments;
+        private static Regex _regexNumbers;
+        private static Regex _regexKeywords;
+        private static Regex _regexCommands;
+        private static Regex _regexSerials;
+        private static Regex _regexLayers;
+        private static Regex _regexExpressions;
+
+        private static void InitHighlightRegexes()
         {
-            return (HighlightType[])Enum.GetValues(typeof(HighlightType));
+            if (_regexStrings1 != null) return; // already initialized
+            var ro = RegexOptions.Compiled | RegexOptions.Multiline;
+            _regexStrings1 = new Regex("([\"'])(?:(?=(\\\\?))\\2.)*?\\1", ro);
+            _regexStrings2 = new Regex("'[^'\\\\]*(\\\\.[^'\\\\]*)*'", ro);
+            _regexComments = new Regex("(//.*$|#.*$)", ro);
+            _regexSerials = new Regex(@"0x[\da-fA-F]*", ro);
+            _regexNumbers = new Regex(@"\b[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\b", ro);
+            _regexKeywords = new Regex(@"\b(if|elseif|else|endif|while|endwhile|for|foreach|endfor|break|continue|not|and|or|stop|replay|loop|as|in|return)\b", ro);
+            _regexCommands = new Regex(@"\b(attack|cast|dress|undress|dressconfig|target|targettype|targetloc|targetrelloc|drop|waitfortarget|wft|dclick|dclicktype|dclickvar|usetype|useobject|droprelloc|lift|lifttype|waitforgump|gumpresponse|gumpclose|menu|menuresponse|waitformenu|promptresponse|waitforprompt|hotkey|say|msg|overhead|sysmsg|wait|pause|waitforstat|setability|setlasttarget|lasttarget|setvar|unsetvar|skill|useskill|walk|script|useonce|organizer|organize|org|restock|scav|scavenger|potion|clearsysmsg|clearjournal|whisper|yell|guild|alliance|emote|waitforsysmsg|wfsysmsg|clearall|virtue|interrupt|sound|music|classicuo|cuo|rename|getlabel|ignore|unignore|clearignore|cooldown|settimer|removetimer|createtimer|poplist|pushlist|removelist|createlist|clearlist|cleardragdrop|clearhands|sell)\b", ro);
+            _regexLayers = new Regex(@"\b(RightHand|LeftHand|Shoes|Pants|Shirt|Head|Gloves|Ring|Talisman|Neck|Hair|Waist|InnerTorso|Bracelet|FacialHair|MiddleTorso|Earrings|Arms|Cloak|Backpack|OuterTorso|OuterLegs|InnerLegs|backpack|true|false|criminal|enemy|friend|friendly|grey|gray|innocent|murderer|red|blue|nonfriendly|cancel|clear|minutes|minute|min|seconds|second|sec)\b", ro);
+            _regexExpressions = new Regex(@"\b(queued|position|insysmsg|insysmessage|findtype|findbuff|finddebuff|stam|maxstam|hp|maxhp|maxhits|hits|mana|maxmana|str|dex|int|poisoned|hidden|mounted|rhandempty|lhandempty|skill|count|counter|weight|dead|closest|close|rand|random|next|prev|previous|human|humanoid|monster|varexist|followers|maxfollowers|maxweight|targetexists|diffmana|diffstam|diffhits|diffhp|diffweight|blessed|invul|invuln|warmode|name|paralyzed|itemcount|poplist|atlist|listexists|list|inlist|timer|timerexists)\b", ro);
         }
 
-        public static RazorScript SelectedScript { get; set; }
-
-        private static Stopwatch Stopwatch { get; } = new Stopwatch();
-        
+        #region Timer
         private class ScriptTimer : Timer
         {
-            // Only run scripts once every 25ms to avoid spamming.
-            public ScriptTimer(int delay) : base(TimeSpan.FromMilliseconds(delay), TimeSpan.FromMilliseconds(delay))
-            {
-            }
-
+            public ScriptTimer(int delay = 25) : base(TimeSpan.FromMilliseconds(delay), TimeSpan.FromMilliseconds(delay)) { }
             protected override void OnTick()
             {
                 try
@@ -106,83 +128,65 @@ namespace Assistant.Scripts
                             ScriptRunning = false;
                             Interpreter.StopScript();
                         }
-
                         return;
                     }
-
                     bool running;
-
                     if (_queuedScript != null)
                     {
-                        // Starting a new script. This relies on the atomicity for references in CLR
+                        if (_isScriptCall) _isScriptCall = false;
                         Script script = _queuedScript;
-
+                        _activeScriptName = _queuedScriptName;
                         running = Interpreter.StartScript(script);
                         UpdateLineNumber(Interpreter.CurrentLine);
-
                         _queuedScript = null;
                     }
                     else
                     {
                         running = Interpreter.ExecuteScript();
-
-                        if (running)
-                        {
-                            UpdateLineNumber(Interpreter.CurrentLine);
-                        }
+                        if (running) UpdateLineNumber(Interpreter.CurrentLine);
                     }
-
-
                     if (running)
                     {
-                        if (ScriptManager.Running == false)
+                        if (!ScriptRunning)
                         {
                             if (!Config.GetBool("ScriptDisablePlayFinish"))
                             {
-                                if (!Config.GetBool("DisableScriptStopwatch"))
-                                {
-                                    Stopwatch.Start();    
-                                }
-                                
-                                World.Player?.SendMessage(LocString.ScriptPlaying, _queuedScriptName);
+                                if (!Config.GetBool("DisableScriptStopwatch")) Stopwatch.Start();
+                                World.Player?.SendMessage(LocString.ScriptPlaying, _activeScriptName);
                             }
-
                             Assistant.Engine.MainWindow.LockScriptUI(true);
                             ScriptRunning = true;
                         }
                     }
                     else
                     {
-                        if (ScriptManager.Running)
+                        if (ScriptRunning)
                         {
-                            // Check if there's a call to return to
-  if (Interpreter.HasCalls)
-    {
-         // Script finished, return to caller
-           ReturnFromCall();
-         return; // Continue running the caller
-   }
-
-                        if (!Config.GetBool("ScriptDisablePlayFinish"))
-                        {
-                            if (!Config.GetBool("DisableScriptStopwatch"))
+                            if (Interpreter.HasCalls)
                             {
-                                Stopwatch.Stop();
-                                TimeSpan elapsed = Stopwatch.Elapsed;
-                                Stopwatch.Reset();
-                                
-                                World.Player?.SendMessage(LocString.ScriptFinishedStopwatch, _queuedScriptName, elapsed.TotalMilliseconds);    
+                                Script callingScript = Interpreter.PopCall();
+                                if (callingScript != null)
+                                {
+                                    _queuedScript = callingScript;
+                                    _queuedScriptName = "Returning from call";
+                                    return;
+                                }
                             }
-                            else
+                            if (!Config.GetBool("ScriptDisablePlayFinish"))
                             {
-                                World.Player?.SendMessage(LocString.ScriptFinished, _queuedScriptName);
+                                if (!Config.GetBool("DisableScriptStopwatch"))
+                                {
+                                    Stopwatch.Stop();
+                                    TimeSpan elapsed = Stopwatch.Elapsed;
+                                    Stopwatch.Reset();
+                                    World.Player?.SendMessage(LocString.ScriptFinishedStopwatch, _activeScriptName, elapsed.TotalMilliseconds);
+                                }
+                                else
+                                    World.Player?.SendMessage(LocString.ScriptFinished, _activeScriptName);
                             }
-                                
-                            }
-
                             Assistant.Engine.MainWindow.LockScriptUI(false);
                             ScriptRunning = false;
-
+                            _activeScriptName = null;
                             ClearHighlightLine(HighlightType.Execution);
                         }
                     }
@@ -190,120 +194,64 @@ namespace Assistant.Scripts
                 catch (Exception ex)
                 {
                     World.Player?.SendMessage(MsgLevel.Error, $"Script Error: {ex.Message} (Line: {Interpreter.CurrentLine + 1})");
-
-                    if (EnableHighlight)
-                    {
-                        SetHighlightLine(Interpreter.CurrentLine, HighlightType.Error);
-                    }
-
+                    if (EnableHighlight) SetHighlightLine(Interpreter.CurrentLine, HighlightType.Error);
                     StopScript();
+                    _activeScriptName = null;
                 }
             }
         }
+        private static ScriptTimer Timer { get; set; } = new ScriptTimer(Config.GetBool("DefaultScriptDelay") ? 25 : 0);
+        public static void ResetTimer()
+        {
+            Timer.Stop();
+            Timer = new ScriptTimer(Config.GetBool("DefaultScriptDelay") ? 25 : 0);
+            Timer.Start();
+        }
+        #endregion
 
+        #region Initialization
         /// <summary>
-        /// This is called via reflection when the application starts up
-        /// </summary>
-        public static void Initialize()
-        {
-            HotKey.Add(HKCategory.Scripts, HKSubCat.None, LocString.StopScript, HotkeyStopScript);
-            HotKey.Add(HKCategory.Scripts, HKSubCat.None, LocString.PauseScript, HotkeyPauseScript);
-            HotKey.Add(HKCategory.Scripts, HKSubCat.None, LocString.ScriptDClickType, HotkeyDClickTypeScript);
-            HotKey.Add(HKCategory.Scripts, HKSubCat.None, LocString.ScriptTargetType, HotkeyTargetTypeScript);
+ /// This is called via reflection when the application starts up
+ /// </summary>
+ public static void Initialize()
+ {
+ HotKey.Add(HKCategory.Scripts, HKSubCat.None, LocString.StopScript, HotkeyStopScript);
+ HotKey.Add(HKCategory.Scripts, HKSubCat.None, LocString.PauseScript, HotkeyPauseScript);
+ HotKey.Add(HKCategory.Scripts, HKSubCat.None, LocString.ScriptDClickType, HotkeyDClickTypeScript);
+ HotKey.Add(HKCategory.Scripts, HKSubCat.None, LocString.ScriptTargetType, HotkeyTargetTypeScript);
 
 
-            _scriptList = new List<RazorScript>();
+ _scriptList = new List<RazorScript>();
 
-            Recurse(null, Config.GetUserDirectory("Scripts"));
-            
-            foreach (HighlightType type in GetHighlightTypes())
-            {
-                HighlightLines[type] = new List<int>();
-            }
+ // Load user scripts
+ Recurse(null, Config.GetUserDirectory("Scripts"));
 
-            Lexer.AllowLoop = Client.Instance.AllowBit(FeatureBit.LoopingMacros);
-        }
+ // Also load optional CUO scripts tree if present (e.g., UORenaissance\Razor\CUO\Scripts)
+ try
+ {
+ var cuoScriptsPath = System.IO.Path.Combine(Assistant.Engine.RootPath, "UORenaissance", "Razor", "CUO", "Scripts");
+ if (System.IO.Directory.Exists(cuoScriptsPath))
+ {
+ Recurse(null, cuoScriptsPath);
+ }
+ }
+ catch
+ {
+ // ignore optional path failures
+ }
+ 
+ foreach (var type in GetHighlightTypes()) HighlightLines[type] = new List<int>();
 
-        private static void HotkeyTargetTypeScript()
-        {
-            if (World.Player != null)
-            {
-                World.Player.SendMessage(MsgLevel.Force, LocString.ScriptTargetType);
-                Targeting.OneTimeTarget(OnTargetTypeScript);
-            }
-        }
+ Lexer.AllowLoop = Client.Instance.AllowBit(FeatureBit.LoopingMacros);
+ }
 
-        private static void OnTargetTypeScript(bool loc, Serial serial, Point3D pt, ushort itemId)
-        {
-            Item item = World.FindItem(serial);
+        #endregion
 
-            if (item != null && item.Serial.IsItem && item.Movable && item.Visible)
-            {
-                string cmd = $"targettype '{item.ItemID.ItemData.Name}'";
-
-                Clipboard.SetDataObject(cmd);
-                World.Player.SendMessage(MsgLevel.Force, Language.Format(LocString.ScriptCopied, cmd), false);
-            }
-            else
-            {
-                Mobile m = World.FindMobile(serial);
-
-                if (m != null)
-                {
-                    string cmd = $"targettype '{m.Body}'";
-
-                    Clipboard.SetDataObject(cmd);
-                    World.Player.SendMessage(MsgLevel.Force, Language.Format(LocString.ScriptCopied, cmd), false);
-                }
-            }
-        }
-
-        private static void HotkeyDClickTypeScript()
-        {
-            if (World.Player != null)
-            {
-                World.Player.SendMessage(MsgLevel.Force, LocString.ScriptTargetType);
-                Targeting.OneTimeTarget(OnDClickTypeScript);
-            }
-        }
-
-        private static void OnDClickTypeScript(bool loc, Serial serial, Point3D pt, ushort itemId)
-        {
-            Item item = World.FindItem(serial);
-
-            if (item != null && item.Serial.IsItem && item.Movable && item.Visible)
-            {
-                string cmd = $"dclicktype '{item.ItemID.ItemData.Name}'";
-
-                Clipboard.SetDataObject(cmd);
-                World.Player.SendMessage(MsgLevel.Force, Language.Format(LocString.ScriptCopied, cmd), false);
-            }
-            else
-            {
-                Mobile m = World.FindMobile(serial);
-
-                if (m != null)
-                {
-                    string cmd = $"dclicktype '{m.Body}'";
-
-                    Clipboard.SetDataObject(cmd);
-                    World.Player.SendMessage(MsgLevel.Force, Language.Format(LocString.ScriptCopied, cmd), false);
-                }
-            }
-        }
-
-        private static void HotkeyStopScript()
-        {
-            StopScript();
-        }
-
+        #region Hotkeys handlers (unchanged)
+        private static void HotkeyStopScript() => StopScript();
         private static void HotkeyPauseScript()
         {
-            if (!ScriptRunning)
-            {
-                return;
-            }
-
+            if (!ScriptRunning) return;
             if (ScriptPaused)
             {
                 ResumeScript();
@@ -315,443 +263,170 @@ namespace Assistant.Scripts
                 PauseScript();
             }
         }
-
-        private static void AddHotkey(RazorScript script)
+        private static void HotkeyTargetTypeScript()
         {
-            HotKey.Add(HKCategory.Scripts, HKSubCat.None, Language.Format(LocString.PlayScript, script), OnHotKey,
-                script);
+            if (World.Player == null) return;
+            World.Player.SendMessage(MsgLevel.Force, LocString.ScriptTargetType);
+            Targeting.OneTimeTarget(OnTargetTypeScript);
         }
-
-        private static void RemoveHotkey(RazorScript script)
+        private static void HotkeyDClickTypeScript()
         {
-            HotKey.Remove(Language.Format(LocString.PlayScript, script.ToString()));
+            if (World.Player == null) return;
+            World.Player.SendMessage(MsgLevel.Force, LocString.ScriptTargetType);
+            Targeting.OneTimeTarget(OnDClickTypeScript);
         }
-
-        public static void OnHotKey(ref object state)
+        private static void OnTargetTypeScript(bool loc, Serial serial, Point3D pt, ushort itemId)
         {
-            RazorScript script = (RazorScript) state;
-            
-            PlayScript(script.Lines, script.Name);
+            Item item = World.FindItem(serial);
+            if (item != null && item.Serial.IsItem && item.Movable && item.Visible)
+            {
+                string cmd = $"targettype '{item.ItemID.ItemData.Name}'";
+                Clipboard.SetDataObject(cmd);
+                World.Player.SendMessage(MsgLevel.Force, Language.Format(LocString.ScriptCopied, cmd), false);
+            }
+            else
+            {
+                Mobile m = World.FindMobile(serial);
+                if (m != null)
+                {
+                    string cmd = $"targettype '{m.Body}'";
+                    Clipboard.SetDataObject(cmd);
+                    World.Player.SendMessage(MsgLevel.Force, Language.Format(LocString.ScriptCopied, cmd), false);
+                }
+            }
         }
+        private static void OnDClickTypeScript(bool loc, Serial serial, Point3D pt, ushort itemId)
+        {
+            Item item = World.FindItem(serial);
+            if (item != null && item.Serial.IsItem && item.Movable && item.Visible)
+            {
+                string cmd = $"dclicktype '{item.ItemID.ItemData.Name}'";
+                Clipboard.SetDataObject(cmd);
+                World.Player.SendMessage(MsgLevel.Force, Language.Format(LocString.ScriptCopied, cmd), false);
+            }
+            else
+            {
+                Mobile m = World.FindMobile(serial);
+                if (m != null)
+                {
+                    string cmd = $"dclicktype '{m.Body}'";
+                    Clipboard.SetDataObject(cmd);
+                    World.Player.SendMessage(MsgLevel.Force, Language.Format(LocString.ScriptCopied, cmd), false);
+                }
+            }
+        }
+        #endregion
 
+        #region Script control
         public static void StopScript()
         {
             _queuedScript = null;
             ScriptPaused = false;
-
             Interpreter.StopScript();
         }
+        public static void PauseScript() { ScriptPaused = true; Interpreter.PauseScript(); }
+        public static void ResumeScript() { ScriptPaused = false; Interpreter.ResumeScript(); }
+        #endregion
 
-        public static void PauseScript()
+        #region Autocomplete
+        private static void BuildAutoCompleteItems()
         {
-            ScriptPaused = true;
-            Interpreter.PauseScript();
-        }
-
-        public static void ResumeScript()
-        {
-            ScriptPaused = false;
-            Interpreter.ResumeScript();
-        }
-
-        public static RazorScript AddScript(string file)
-        {
-            RazorScript script = new RazorScript
+            if (_autoCompleteMenu == null) return;
+            var list = new List<AutocompleteItem>
             {
-                Lines = File.ReadAllLines(file),
-                Name = Path.GetFileNameWithoutExtension(file),
-                Path = file
+                new AutocompleteItem("call", -1, "call", "call", "Usage: call 'script' – run sub-script."),
+                new AutocompleteItem("return", -1, "return", "return", "Return from called script")
             };
-
-            if (Path.GetDirectoryName(script.Path).Equals(Config.GetUserDirectory("Scripts")))
+            foreach (var rs in _scriptList ?? Enumerable.Empty<RazorScript>())
             {
-                script.Category = string.Empty;
+                string snippet = $"call '{rs.Name}'";
+                // Create tooltip showing the actual script content (first 20 lines)
+                string scriptPreview = GetScriptPreview(rs.Lines, 20);
+                list.Add(new AutocompleteItem(snippet, -1, snippet, $"Script: {rs.Name}", scriptPreview));
             }
-            else
-            {
-                string cat = file.Replace(Config.GetUserDirectory("Scripts"), "").Substring(1);
-                script.Category = Path.GetDirectoryName(cat).Replace("/", "\\");
-            }
-
-            AddHotkey(script);
-
-            _scriptList.Add(script);
-
-            return script;
-        }
-
-        public static void RemoveScript(RazorScript script)
-        {
-            RemoveHotkey(script);
-
-            _scriptList.Remove(script);
+            _autoCompleteItems = list;
+            _autoCompleteMenu.Items.SetAutocompleteItems(list);
         }
         
-        public static void PlayScript(string scriptName)
+        /// <summary>
+        /// Get a preview of the script (first N lines) for tooltip display
+        /// </summary>
+        private static string GetScriptPreview(string[] lines, int maxLines)
         {
-            foreach (RazorScript razorScript in _scriptList)
-            {
-                if (razorScript.ToString().IndexOf(scriptName, StringComparison.OrdinalIgnoreCase) != -1)
-                {
-                    PlayScript(razorScript.Lines, scriptName);
-                    break;
-                }
-            }
-        }
-
-        public static void PlayScript(string[] lines, string name)
-        {
-            if (World.Player == null || lines == null)
-                return;
-
-            if (MacroManager.Playing || MacroManager.StepThrough)
-                MacroManager.Stop();
-
-            StopScript();
+            if (lines == null || lines.Length == 0)
+                return "(Empty script)";
             
-            EnableHighlight = false;
+            int previewLines = Math.Min(lines.Length, maxLines);
+            var preview = new System.Text.StringBuilder();
             
-            SetVariableActive = false;
-
-            if (_queuedScript != null)
-                return;
-
-            if (!Client.Instance.ClientRunning)
-                return;
-
-            try
+            for (int i = 0; i < previewLines; i++)
             {
-                Script script = new Script(Lexer.Lex(lines));
-                
-                _queuedScript = script;
-                _queuedScriptName = name;
+                preview.AppendLine(lines[i]);
             }
-            catch (SyntaxError syntaxError)
-            {
-                World.Player.SendMessage(MsgLevel.Error, $"{syntaxError.Message}: '{syntaxError.Line}' (Line #{syntaxError.LineNumber + 1})");
-            }
+            
+            if (lines.Length > maxLines)
+                preview.AppendLine($"... ({lines.Length - maxLines} more lines)");
+            
+            return preview.ToString();
         }
         
-        public static void PlayScriptFromUI(string[] lines, string name, bool highlight)
+        private static void RefreshAutoCompleteScripts() => BuildAutoCompleteItems();
+        #endregion
+
+        #region Editor init & highlighting
+        private static void ApplyFullSyntaxHighlight()
         {
-            if (World.Player == null || ScriptEditor == null || lines == null)
-                return;
-
-            EnableHighlight = highlight;
-
-            if (EnableHighlight)
+            if (ScriptEditor == null) return;
+            if (!UseOriginalColors)
             {
-                ClearAllHighlightLines();
+                InitHighlightRegexes();
+                var range = ScriptEditor.Range;
+                range.ClearStyle(_keywordStyle, _commandStyle, _numberStyle, _stringStyle, _commentStyle, _serialStyle, _layerStyle, _expressionStyle, _sysmsgStyle, _overheadStyle);
+                range.SetStyle(_stringStyle, _regexStrings1);
+                range.SetStyle(_stringStyle, _regexStrings2);
+                range.SetStyle(_commentStyle, _regexComments);
+                range.SetStyle(_serialStyle, _regexSerials);
+                range.SetStyle(_numberStyle, _regexNumbers);
+                range.SetStyle(_keywordStyle, _regexKeywords);
+                range.SetStyle(_commandStyle, _regexCommands);
+                range.SetStyle(_layerStyle, _regexLayers);
+                range.SetStyle(_expressionStyle, _regexExpressions);
+                // legacy sysmsg / overhead start-of-line emphasis (keep bold colors if desired)
+                range.SetStyle(_sysmsgStyle, @"(?m)^\s*sysmsg\b");
+                range.SetStyle(_overheadStyle, @"(?m)^\s*overhead\b");
             }
 
-            if (MacroManager.Playing || MacroManager.StepThrough)
-                MacroManager.Stop();
-
-            StopScript(); // be sure nothing is running
-            
-            SetVariableActive = false;
-
-            if (_queuedScript != null)
-                return;
-
-            if (!Client.Instance.ClientRunning)
-                return;
-
+            // Always try the built-in SyntaxHighlighter path as a fallback (ensures colors even if UseOriginalColors is true)
             try
             {
-                Script script = new Script(Lexer.Lex(lines));
-                
-                _queuedScript = script;
-                _queuedScriptName = name;
-            }
-            catch (SyntaxError syntaxError)
-            {
-                World.Player.SendMessage(MsgLevel.Error, $"{syntaxError.Message}: '{syntaxError.Line}' (Line #{syntaxError.LineNumber + 1})");
-
-                if (EnableHighlight)
+                if (ScriptEditor.SyntaxHighlighter == null)
                 {
-                    SetHighlightLine(syntaxError.LineNumber, HighlightType.Error);
+                    ScriptEditor.SyntaxHighlighter = new SyntaxHighlighter(ScriptEditor);
+                    ScriptEditor.SyntaxHighlighter.InitStyleSchema(FastColoredTextBoxNS.Language.Razor);
                 }
+                ScriptEditor.SyntaxHighlighter.RazorSyntaxHighlight(ScriptEditor.Range);
+            }
+            catch
+            {
+                // Do not crash the UI if the highlighter fails
             }
         }
-
-        /*private static void ActiveScriptStatementExecuted(ASTNode statement)
-        {
-            if (EnableHighlight && statement != null)
-            {
-                var lineNum = statement.LineNumber;
-
-                SetHighlightLine(lineNum, HighlightType.Execution);
-                // Scrolls to relevant line, per this suggestion: https://github.com/PavelTorgashov/FastColoredTextBox/issues/115
-                ScriptEditor.Selection.Start = new Place(0, lineNum);
-                ScriptEditor.DoSelectionVisible();
-            }
-        }*/
-
-        private static ScriptTimer Timer { get; set; }
-
-        static ScriptManager()
-        {
-            Timer = new ScriptTimer(Config.GetBool("DefaultScriptDelay") ? 25 : 0);
-        }
-
-        public static void ResetTimer()
-        {
-            Timer.Stop();
-            Timer = new ScriptTimer(Config.GetBool("DefaultScriptDelay") ? 25 : 0);
-            Timer.Start();
-        }
-
-        private static void UpdateLineNumber(int lineNum)
-        {
-            if (EnableHighlight)
-            {
-                SetHighlightLine(lineNum, HighlightType.Execution);
-                // Scrolls to relevant line, per this suggestion: https://github.com/PavelTorgashov/FastColoredTextBox/issues/115
-                ScriptEditor.Selection.Start = new Place(0, lineNum);
-                ScriptEditor.DoSelectionVisible();
-            }
-        }
-
-        public static void SetEditor(FastColoredTextBox scriptEditor)
-        {
-            ScriptEditor = scriptEditor;
-
-            InitScriptEditor();
-
-            if (SelectedScript != null)
-            {
-                SetEditorText(SelectedScript);
-            }
-        }
-
-        public static void SetEditorText(RazorScript selectedScript)
-        {
-            SelectedScript = selectedScript;
-
-            ScriptEditor.Text = string.Join("\n", SelectedScript.Lines);
-        }
-
-        public static void SetControls(FastColoredTextBox scriptEditor, TreeView scriptTree, ListBox scriptVariables)
-        {
-            ScriptEditor = scriptEditor;
-            ScriptTree = scriptTree;
-            ScriptVariableList = scriptVariables;
-        }
-
-        public static void OnLogin()
-        {
-            Commands.Register();
-            AgentCommands.Register();
-            SpeechCommands.Register();
-            TargetCommands.Register();
-
-            Aliases.Register();
-            Expressions.Register();
-
-            Timer.Start();
-        }
-
-        public static void OnLogout()
-        {
-            StopScript();
-            Timer.Stop();
-            Assistant.Engine.MainWindow.LockScriptUI(false);
-        }
-
-        public static void StartEngine()
-        {
-            Timer.Start();
-        }
-
-        private static List<RazorScript> _scriptList { get; set; }
-
-        /// <summary>
-        /// Get all available scripts
-        /// </summary>
-        public static List<RazorScript> GetAllScripts()
-        {
-            return _scriptList ?? new List<RazorScript>();
-        }
-
-        /// <summary>
-        /// Call a script as a subroutine (will return to calling script when done)
-        /// </summary>
-        public static void CallScript(string[] lines, string name)
-        {
-            if (World.Player == null || lines == null)
-                return;
-
-            if (!Client.Instance.ClientRunning)
-                return;
-
-            try
-            {
-                // Get the currently active script (if any)
-                Script currentScript = Interpreter.GetActiveScript();
-
-                // Push it onto the call stack before starting the new script
-                if (currentScript != null)
-                {
-                    Interpreter.PushCall(currentScript, _queuedScriptName ?? "Unknown");
-                }
-
-                // Parse and queue the new script
-                Script newScript = new Script(Lexer.Lex(lines));
-                _queuedScript = newScript;
-                _queuedScriptName = name;
-            }
-            catch (SyntaxError syntaxError)
-            {
-                World.Player.SendMessage(MsgLevel.Error, $"{syntaxError.Message}: '{syntaxError.Line}' (Line #{syntaxError.LineNumber + 1})");
-            }
-        }
-
-        /// <summary>
-        /// Return from a called script back to the calling script
-        /// </summary>
-        public static void ReturnFromCall()
-        {
-            if (Interpreter.HasCalls)
-            {
-                // Pop the calling script from the stack
-                Script callingScript = Interpreter.PopCall();
-
-                if (callingScript != null)
-                {
-                    // Advance past the 'call' statement so we don't call it again
-                    callingScript.Advance();
-
-                    // Queue it to resume execution
-                    _queuedScript = callingScript;
-                    _queuedScriptName = "Returning from call";
-                }
-            }
-        }
-
-        public static void RedrawScriptVariables()
-        {
-            ScriptVariableList?.SafeAction(s =>
-            {
-                s.BeginUpdate();
-                s.Items.Clear();
-
-                foreach (KeyValuePair<string, Serial> variable in ScriptVariables.Variables)
-                {
-                    s.Items.Add($"{variable.Key} ({variable.Value})");
-                }
-
-                s.EndUpdate();
-                s.Refresh();
-                s.Update();
-            });
-        }
-
-        public static bool AddToScript(string command)
-        {
-            if (Recording)
-            {
-                ScriptEditor?.AppendText(command + Environment.NewLine);
-
-                return true;
-            }
-
-            return false;
-        }
-
-        private static int GetScriptIndex(string script)
-        {
-            for (int i = 0; i < _scriptList.Count; i++)
-            {
-                if (_scriptList[i].Name.Equals(script, StringComparison.OrdinalIgnoreCase))
-                    return i;
-            }
-
-            return -1;
-        }
-
-        public static void Error(bool quiet, string statement, string message, bool throwError = false)
-        {
-            if (quiet)
-                return;
-
-            World.Player?.SendMessage(MsgLevel.Error, $"{statement}: {message}");
-        }
-
-        public static List<ASTNode> ParseArguments(ref ASTNode node)
-        {
-            List<ASTNode> args = new List<ASTNode>();
-            while (node != null)
-            {
-                args.Add(node);
-                node = node.Next();
-            }
-
-            return args;
-        }
-
-        private delegate void SetHighlightLineDelegate(int iline, Color color);
-
-        /// <summary>
-        /// Adds a new highlight of specified type
-        /// </summary>
-        /// <param name="iline">Line number to highlight</param>
-        /// <param name="type">Type of highlight to set</param>
-        private static void AddHighlightLine(int iline, HighlightType type)
-        {
-            HighlightLines[type].Add(iline);
-            RefreshHighlightLines();
-        }
-
-        /// <summary>
-        /// Clears existing highlight lines of this type, and adds a new one at specified line number
-        /// </summary>
-        /// <param name="iline">Line number to highlight</param>
-        /// <param name="type">Type of highlight to set</param>
-        private static void SetHighlightLine(int iline, HighlightType type)
-        {
-            ClearHighlightLine(type);
-            AddHighlightLine(iline, type);
-        }
-
-        public static void ClearHighlightLine(HighlightType type)
-        {
-            HighlightLines[type].Clear();
-            RefreshHighlightLines();
-        }
-
-        public static void ClearAllHighlightLines()
-        {
-            foreach (HighlightType type in GetHighlightTypes())
-            {
-                HighlightLines[type].Clear();
-            }
-
-            RefreshHighlightLines();
-        }
-
-        private static void RefreshHighlightLines()
-        {
-            for (int i = 0; i < ScriptEditor.LinesCount; i++)
-            {
-                ScriptEditor[i].BackgroundBrush = ScriptEditor.BackBrush;
-            }
-
-            foreach (HighlightType type in GetHighlightTypes())
-            {
-                foreach (int lineNum in HighlightLines[type])
-                {
-                    ScriptEditor[lineNum].BackgroundBrush = HighlightLineColors[type];
-                }
-            }
-
-            ScriptEditor.Invalidate();
-        }
-
-        private static FastColoredTextBoxNS.AutocompleteMenu _autoCompleteMenu;
-
         public static void InitScriptEditor()
         {
+            if (ScriptEditor == null) return;
+
+            // Ensure the editor is configured for Razor highlighting
+            try
+            {
+                ScriptEditor.Language = FastColoredTextBoxNS.Language.Razor;
+                if (ScriptEditor.SyntaxHighlighter == null)
+                {
+                    ScriptEditor.SyntaxHighlighter = new SyntaxHighlighter(ScriptEditor);
+                }
+                ScriptEditor.SyntaxHighlighter.InitStyleSchema(FastColoredTextBoxNS.Language.Razor);
+            }
+            catch { }
+
             _autoCompleteMenu = new AutocompleteMenu(ScriptEditor)
             {
                 SearchPattern = @"[\w\.:=!<>]",
@@ -759,451 +434,60 @@ namespace Assistant.Scripts
                 ToolTipDuration = 5000,
                 AppearInterval = 100
             };
-
-            #region Keywords
-
-            string[] keywords =
+            BuildAutoCompleteItems();
+            ScriptEditor.TextChanged -= ScriptEditorOnTextChanged;
+            ScriptEditor.TextChanged += ScriptEditorOnTextChanged;
+            ApplyFullSyntaxHighlight();
+        }
+        private static void ScriptEditorOnTextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (!UseOriginalColors)
             {
-                    "if", "elseif", "else", "endif", "while", "endwhile", "for", "endfor", "break", "continue", "stop",
-                    "replay", "not", "and", "or"
-                };
+                InitHighlightRegexes();
+                e.ChangedRange.ClearStyle(_keywordStyle, _commandStyle, _numberStyle, _stringStyle, _commentStyle, _serialStyle, _layerStyle, _expressionStyle, _sysmsgStyle, _overheadStyle);
+                e.ChangedRange.SetStyle(_stringStyle, _regexStrings1);
+                e.ChangedRange.SetStyle(_stringStyle, _regexStrings2);
+                e.ChangedRange.SetStyle(_commentStyle, _regexComments);
+                e.ChangedRange.SetStyle(_serialStyle, _regexSerials);
+                e.ChangedRange.SetStyle(_numberStyle, _regexNumbers);
+                e.ChangedRange.SetStyle(_keywordStyle, _regexKeywords);
+                e.ChangedRange.SetStyle(_commandStyle, _regexCommands);
+                e.ChangedRange.SetStyle(_layerStyle, _regexLayers);
+                e.ChangedRange.SetStyle(_expressionStyle, _regexExpressions);
+                e.ChangedRange.SetStyle(_sysmsgStyle, @"(?m)^\s*sysmsg\b");
+                e.ChangedRange.SetStyle(_overheadStyle, @"(?m)^\s*overhead\b");
+            }
 
-            #endregion
-
-            #region Commands auto-complete
-
-            string[] commands =
+            // Fallback to built-in highlighter
+            try
             {
-                "alliance", "clearall", "cleardragdrop", "clearhands", "emote", "guild", "attack", "interrupt", "virtue", "yell",
-                "cast", "dclick", "dclicktype",
-                "dress", "drop", "droprelloc", "gumpresponse", "gumpclose", "hotkey", "lasttarget", "lift", "lifttype",
-                "menu", "menuresponse", "organizer", "overhead", "potion", "promptresponse", "restock", "say",
-                "whisper", "yell", "emote", "script", "scavenger", "sell", "setability", "setlasttarget", "setvar",
-                "skill", "sysmsg", "target", "targettype", "targetrelloc", "undress", "useonce", "walk", "wait",
-                "pause", "waitforgump", "waitformenu", "waitforprompt", "waitfortarget", "waitforsysmsg", "clearsysmsg", "clearjournal",
-                "waitforsysmsg", "random"
+                ScriptEditor.SyntaxHighlighter?.RazorSyntaxHighlight(e.ChangedRange);
+            }
+            catch { }
+        }
+        #endregion
+
+        #region Script load/save
+        public static RazorScript AddScript(string file)
+        {
+            var script = new RazorScript
+            {
+                Lines = File.ReadAllLines(file),
+                Name = Path.GetFileNameWithoutExtension(file),
+                Path = file,
+                Category = Path.GetDirectoryName(file).Equals(Config.GetUserDirectory("Scripts")) ? string.Empty : Path.GetDirectoryName(file.Replace(Config.GetUserDirectory("Scripts"), "").TrimStart(Path.DirectorySeparatorChar)).Replace("/", "\\")
             };
-
-            #endregion
-
-            Dictionary<string, ToolTipDescriptions> descriptionCommands = new Dictionary<string, ToolTipDescriptions>();
-
-            #region CommandToolTips
-
-            var tooltip = new ToolTipDescriptions("attack", new[] { "attack (serial) or attack ('variablename')" },
-                "N/A", "Attack a specific serial or variable tied to a serial.", "attack 0x2AB4\n\tattack 'attackdummy'");
-            descriptionCommands.Add("attack", tooltip);
-
-            tooltip = new ToolTipDescriptions("clearall", new[] { "clearall" }, "N/A", "Clear target, clear queues, drop anything you're holding",
-                "clearall");
-            descriptionCommands.Add("clearall", tooltip);
-
-            tooltip = new ToolTipDescriptions("clearhands", new[] { "clearhands ('right'/'left'/'hands')" }, "N/A", "Use the item in your hands",
-                "clearhands");
-            descriptionCommands.Add("clearhands", tooltip);
-
-            tooltip = new ToolTipDescriptions("virtue", new[] { "virtue ('honor'/'sacrifice'/'valor')" }, "N/A", "Invoke a specific virtue",
-                "virtue 'honor'");
-            descriptionCommands.Add("virtue", tooltip);
-
-            tooltip = new ToolTipDescriptions("cast", new[] { "cast ('name of spell')" }, "N/A", "Cast a spell by name",
-                "cast 'blade spirits'");
-            descriptionCommands.Add("cast", tooltip);
-
-            tooltip = new ToolTipDescriptions("dclick", new[] { "dclick (serial) or useobject (serial)" }, "N/A",
-                "This command will use (double-click) a specific item or mobile.", "dclick 0x34AB");
-            descriptionCommands.Add("dclick", tooltip);
-
-            tooltip = new ToolTipDescriptions("dclicktype",
-                new[]
-                {
-                        "dclicktype ('name of item') OR (graphicID) [inrange] or usetype ('name of item') OR (graphicID) [inrange/backpack] [hue]"
-                }, "N/A",
-                "This command will use (double-click) an item type either provided by the name or the graphic ID.\n\t\tIf you include the optional true parameter, items within range (2 tiles) will only be considered.",
-                "dclicktype 'dagger'\n\t\twaitfortarget\n\t\ttargettype 'robe'");
-            descriptionCommands.Add("dclicktype", tooltip);
-
-            tooltip = new ToolTipDescriptions("dress", new[] { "dress ('name of dress list')" }, "N/A",
-                "This command will execute a spec dress list you have defined in Razor.", "dress 'My Sunday Best'");
-            descriptionCommands.Add("dress", tooltip);
-
-            tooltip = new ToolTipDescriptions("drop", new[] { "drop (serial) (x/y/z/layername)" }, "N/A",
-                "This command will drop the item you are holding either at your feet,\n\t\ton a specific layer or at a specific X / Y / Z location.",
-                "lift 0x400D54A7 1\n\t\tdrop 0x6311 InnerTorso");
-            descriptionCommands.Add("drop", tooltip);
-
-            tooltip = new ToolTipDescriptions("", new[] { "" }, "N/A", "",
-                "lift 0x400D54A7 1\n\twait 5000\n\tdrop 0xFFFFFFFF 5926 1148 0");
-            descriptionCommands.Add("", tooltip);
-
-            tooltip = new ToolTipDescriptions("droprelloc", new[] { "droprelloc (x) (y)" }, "N/A",
-                "This command will drop the item you're holding to a location relative to your position.",
-                "lift 0x400EED2A 1\n\twait 1000\n\tdroprelloc 1 1");
-            descriptionCommands.Add("droprelloc", tooltip);
-
-            tooltip = new ToolTipDescriptions("gumpresponse", new[] { "gumpresponse (buttonID)" }, "N/A",
-                "Responds to a specific gump button", "gumpresponse 4");
-            descriptionCommands.Add("gumpresponse", tooltip);
-
-            tooltip = new ToolTipDescriptions("gumpclose", new[] { "gumpclose" }, "N/A",
-                "This command will close the last gump that opened.", "gumpclose");
-            descriptionCommands.Add("gumpclose", tooltip);
-
-            tooltip = new ToolTipDescriptions("hotkey", new[] { "hotkey ('name of hotkey')" }, "N/A",
-                "This command will execute any Razor hotkey by name.",
-                "skill 'detect hidden'\n\twaitfortarget\n\thotkey 'target self'");
-            descriptionCommands.Add("hotkey", tooltip);
-
-            tooltip = new ToolTipDescriptions("lasttarget", new[] { "lasttarget" }, "N/A",
-                "This command will target your last target set in Razor.",
-                "cast 'magic arrow'\n\twaitfortarget\n\tlasttarget");
-            descriptionCommands.Add("lasttarget", tooltip);
-
-            tooltip = new ToolTipDescriptions("lift", new[] { "lift (serial) [amount]" }, "N/A",
-                "This command will lift a specific item and amount. If no amount is provided, 1 is defaulted.",
-                "lift 0x400EED2A 1\n\twait 1000\n\tdroprelloc 1 1 0");
-            descriptionCommands.Add("lift", tooltip);
-
-            tooltip = new ToolTipDescriptions("lifttype",
-                new[] { "lifttype (gfx) [amount] or lifttype ('name of item') [amount] [hue]" }, "N/A",
-                "This command will lift a specific item by type either by the graphic id or by the name.\n\tIf no amount is provided, 1 is defaulted.",
-                "lifttype 'robe'\n\twait 1000\n\tdroprelloc 1 1 0\n\tlifttype 0x1FCD\n\twait 1000\n\tdroprelloc 1 1");
-            descriptionCommands.Add("lifttype", tooltip);
-
-            tooltip = new ToolTipDescriptions("menu", new[] { "menu (serial) (index) [false]" }, "N/A",
-                "Selects a specific index within a context menu", "# open backpack\n\tmenu 0 1");
-            descriptionCommands.Add("menu", tooltip);
-
-            tooltip = new ToolTipDescriptions("menuresponse", new[] { "menuresponse (index) (menuId) [hue]" }, "N/A",
-                "Responds to a specific menu and menu ID (not a context menu)", "menuresponse 3 4");
-            descriptionCommands.Add("menuresponse", tooltip);
-
-            tooltip = new ToolTipDescriptions("organizer", new[] { "organizer (number) ['set']" }, "N/A",
-                "This command will execute a specific organizer agent. If the set parameter is included,\n\tyou will instead be prompted to set the organizer agent's hotbag.",
-                "organizer 1\n\torganizer 4 'set'");
-            descriptionCommands.Add("organizer", tooltip);
-
-            tooltip = new ToolTipDescriptions("overhead", new[] { "overhead ('text') [color] [serial]" }, "N/A",
-                "This command will display a message over your head. Only you can see this.",
-                "if stam = 100\n\t    overhead 'ready to go!'\n\tendif");
-            descriptionCommands.Add("overhead", tooltip);
-
-            tooltip = new ToolTipDescriptions("potion", new[] { "potion ('potion type')" }, "N/A",
-                "This command will use a specific potion based on the type.", "potion 'agility'\n\tpotion 'heal'");
-            descriptionCommands.Add("potion", tooltip);
-
-            tooltip = new ToolTipDescriptions("promptresponse", new[] { "promptresponse ('prompt response')" }, "N/A",
-                "This command will respond to a prompt triggered from actions such as renaming runes or giving a guild title.",
-                "dclicktype 'rune'\n\twaitforprompt\n\tpromptresponse 'to home'");
-            descriptionCommands.Add("promptresponse", tooltip);
-
-            tooltip = new ToolTipDescriptions("restock", new[] { "restock (number) ['set']" }, "N/A",
-                "This command will execute a specific restock agent.\n\tIf the set parameter is included, you will instead be prompted to set the restock agent's hotbag.",
-                "restock 1\n\trestock 4 'set'");
-            descriptionCommands.Add("restock", tooltip);
-
-            tooltip = new ToolTipDescriptions("say",
-                new[] { "say ('message to send') [hue] or msg ('message to send') [hue]" }, "N/A",
-                "This command will force your character to say the message passed as the parameter.",
-                "say 'Hello world!'\n\tsay 'Hello world!' 454");
-            descriptionCommands.Add("say", tooltip);
-
-            tooltip = new ToolTipDescriptions("whisper",
-                new[] { "whisper ('message to send') [hue]" }, "N/A",
-                "This command will force your character to whisper the message passed as the parameter.",
-                "whisper 'Hello world!'\n\twhisper 'Hello world!' 454");
-            descriptionCommands.Add("whisper", tooltip);
-
-            tooltip = new ToolTipDescriptions("yell",
-                new[] { "yell ('message to send') [hue]" }, "N/A",
-                "This command will force your character to yell the message passed as the parameter.",
-                "yell 'Hello world!'\n\tyell 'Hello world!' 454");
-            descriptionCommands.Add("yell", tooltip);
-
-            tooltip = new ToolTipDescriptions("emote",
-                new[] { "emote ('message to send') [hue]" }, "N/A",
-                "This command will force your character to emote the message passed as the parameter.",
-                "emote 'Hello world!'\n\temote 'Hello world!' 454");
-            descriptionCommands.Add("emote", tooltip);
-
-            tooltip = new ToolTipDescriptions("script", new[] { "script 'name'" }, "N/A",
-                "This command will call another script.", "if hp = 40\n\t   script 'healself'\n\tendif");
-            descriptionCommands.Add("script", tooltip);
-
-            tooltip = new ToolTipDescriptions("scavenger", new[] { "scavenger ['clear'/'add'/'on'/'off'/'set']" },
-                "N/A", "This command will control the scavenger agent.", "scavenger 'off'");
-            descriptionCommands.Add("scavenger", tooltip);
-
-            tooltip = new ToolTipDescriptions("sell", new[] { "sell" }, "N/A",
-                "This command will set the Sell agent's hotbag.", "sell");
-            descriptionCommands.Add("sell", tooltip);
-
-            tooltip = new ToolTipDescriptions("setability",
-                new[] { "setability ('primary'/'secondary'/'stun'/'disarm') ['on'/'off']" }, "N/A",
-                "This will set a specific ability on or off. If on or off is missing, on is defaulted.",
-                "setability stun");
-            descriptionCommands.Add("setability", tooltip);
-
-            tooltip = new ToolTipDescriptions("setlasttarget", new[] { "setlasttarget" }, "N/A",
-                "This command will pause the script until you select a target to be set as Last Target.",
-                "overhead 'set last target'\n\tsetlasttarget\n\toverhead 'set!'\n\tcast 'magic arrow'\n\twaitfortarget\n\ttarget 'last'");
-            descriptionCommands.Add("setlasttarget", tooltip);
-
-            tooltip = new ToolTipDescriptions("setvar", new[] { "setvar ('variable') or setvariable ('variable')" },
-                "N/A",
-                "This command will pause the script until you select a target to be assigned a variable.\n\tPlease note, the variable must exist before you can assign values to it.",
-                "setvar 'dummy'\n\tcast 'magic arrow'\n\twaitfortarget\n\ttarget 'dummy'");
-            descriptionCommands.Add("setvar", tooltip);
-
-            tooltip = new ToolTipDescriptions("skill", new[] { "skill 'name of skill' or skill last" }, "N/A",
-                "This command will use a specific skill (assuming it's a usable skill).",
-                "while mana < maxmana\n\t    say 'mediation!'\n\t    skill 'meditation'\n\t    wait 11000\n\tendwhile");
-            descriptionCommands.Add("skill", tooltip);
-
-            tooltip = new ToolTipDescriptions("sysmsg", new[] { "sysmsg ('message to display in system message')" },
-                "N/A", "This command will display a message in the lower-left of the client.",
-                "if stam = 100\n\t    sysmsg 'ready to go!'\n\tendif");
-            descriptionCommands.Add("sysmsg", tooltip);
-
-            tooltip = new ToolTipDescriptions("target", new[] { "target (serial) or target (x) (y) (z)" }, "N/A",
-                "This command will target a specific mobile or item or target a specific location based on X/Y/Z coordinates.",
-                "cast 'lightning'\n\twaitfortarget\n\ttarget 0xBB3\n\tcast 'fire field'\n\twaitfortarget\n\ttarget 5923 1145 0");
-            descriptionCommands.Add("target", tooltip);
-
-            tooltip = new ToolTipDescriptions("targettype",
-                new[] { "targettype (graphic) or targettype ('name of item or mobile type') [inrangecheck/backpack] [hue]" }, "N/A",
-                "This command will target a specific type of mobile or item based on the graphic id or based on\n\tthe name of the item or mobile. If the optional parameter is passed\n\tin as true only items within the range of 2 tiles will be considered.",
-                "usetype 'dagger'\n\twaitfortarget\n\ttargettype 'robe'\n\tuseobject 0x4005ECAF\n\twaitfortarget\n\ttargettype 0x1f03\n\tuseobject 0x4005ECAF\n\twaitfortarget\n\ttargettype 0x1f03 true");
-            descriptionCommands.Add("targettype", tooltip);
-
-            tooltip = new ToolTipDescriptions("targetrelloc", new[] { "targetrelloc (x-offset) (y-offset)" }, "N/A",
-                "This command will target a specific location on the map relative to your position.",
-                "cast 'fire field'\n\twaitfortarget\n\ttargetrelloc 1 1");
-            descriptionCommands.Add("targetrelloc", tooltip);
-
-            tooltip = new ToolTipDescriptions("undress",
-                new[] { "undress ['name of dress list']' or undress 'LayerName'" }, "N/A",
-                "This command will either undress you completely if no dress list is provided.\n\tIf you provide a dress list, only those specific items will be undressed. Lastly, you can define a layer name to undress.",
-                "undress\n\tundress 'My Sunday Best'\n\tundress 'Shirt'\n\tundrsss 'Pants'");
-            descriptionCommands.Add("undress", tooltip);
-
-            tooltip = new ToolTipDescriptions("useonce", new[] { "useonce ['add'/'addcontainer']" }, "N/A",
-                "This command will execute the UseOnce agent. If the add parameter is included, you can add items to your UseOnce list.\n\tIf the addcontainer parameter is included, you can add all items in a container to your UseOnce list.",
-                "useonce\n\tuseonce 'add'\n\tuseonce 'addcontainer'");
-            descriptionCommands.Add("useonce", tooltip);
-
-            tooltip = new ToolTipDescriptions("walk", new[] { "walk ('direction')" }, "N/A",
-                "This command will turn and/or walk your player in a certain direction.",
-                "walk 'North'\n\twalk 'Up'\n\twalk 'West'\n\twalk 'Left'\n\twalk 'South'\n\twalk 'Down'\n\twalk 'East'\n\twalk 'Right'");
-            descriptionCommands.Add("walk", tooltip);
-
-            tooltip = new ToolTipDescriptions("wait",
-                new[] { "wait [time in milliseconds or pause [time in milliseconds]" }, "N/A",
-                "This command will pause the execution of a script for a given time.",
-                "while stam < 100\n\t    wait 5000\n\tendwhile");
-            descriptionCommands.Add("wait", tooltip);
-
-            tooltip = new ToolTipDescriptions("pause",
-                new[] { "pause [time in milliseconds or pause [time in milliseconds]" }, "N/A",
-                "This command will pause the execution of a script for a given time.",
-                "while stam < 100\n\t    wait 5000\n\tendwhile");
-            descriptionCommands.Add("pause", tooltip);
-
-            tooltip = new ToolTipDescriptions("waitforgump", new[] { "waitforgump [gump id]" }, "N/A",
-                "This command will wait for a gump. If no gump id is provided, it will wait for **any * *gump.",
-                "waitforgump\n\twaitforgump 4");
-            descriptionCommands.Add("waitforgump", tooltip);
-
-            tooltip = new ToolTipDescriptions("waitformenu", new[] { "waitformenu [menu id]" }, "N/A",
-                "This command will wait for menu (not a context menu). If no menu id is provided, it will wait for **any * *menu.",
-                "waitformenu\n\twaitformenu 4");
-            descriptionCommands.Add("waitformenu", tooltip);
-
-            tooltip = new ToolTipDescriptions("waitforprompt", new[] { "waitforprompt" }, "N/A",
-                "This command will wait for a prompt before continuing.",
-                "dclicktype 'rune'\n\twaitforprompt\n\tpromptresponse 'to home'");
-            descriptionCommands.Add("waitforprompt", tooltip);
-
-            tooltip = new ToolTipDescriptions("waitfortarget",
-                new[] { "waitfortarget [pause in milliseconds] or wft [pause in milliseconds]" }, "N/A",
-                "This command will cause the script to pause until you have a target cursor.\n\tBy default it will wait 30 seconds but you can define a specific wait time if you prefer.",
-                "cast 'energy bolt'\n\twaitfortarget\n\thotkey 'Target Closest Enemy'");
-            descriptionCommands.Add("waitfortarget", tooltip);
-
-            tooltip = new ToolTipDescriptions("clearsysmsg",
-                new[] { "clearsysmsg" }, "N/A",
-                "This command will clear the internal system message queue used with insysmsg.",
-                "clearsysmsg\n");
-            descriptionCommands.Add("clearsysmsg", tooltip);
-
-            tooltip = new ToolTipDescriptions("clearjournal",
-                new[] { "clearjournal" }, "N/A",
-                "This command (same as clearjournal) will clear the internal system message queue used with insysmsg.",
-                "clearjournal\n");
-            descriptionCommands.Add("clearjournal", tooltip);
-
-            tooltip = new ToolTipDescriptions("waitforsysmsg",
-                new[] { "waitforsysmsg" }, "N/A",
-                "This command will pause the script until the message defined is in the system message queue.",
-                "waitforsysmsg 'message here'\n");
-            descriptionCommands.Add("waitforsysmsg", tooltip);
-
-            tooltip = new ToolTipDescriptions("random",
-                new[] { "random [max number]" }, "N/A",
-                "This command output a random number between 1 and the max number provided.",
-                "random '15'\n");
-            descriptionCommands.Add("random", tooltip);
-
-            #endregion
-
-            if (!Config.GetBool("DisableScriptTooltips"))
-            {
-                List<AutocompleteItem> items = new List<AutocompleteItem>();
-
-                foreach (var item in keywords)
-                {
-                    items.Add(new AutocompleteItem(item));
-                }
-
-                foreach (var item in commands)
-                {
-                    descriptionCommands.TryGetValue(item, out ToolTipDescriptions element);
-
-                    if (element != null)
-                    {
-                        items.Add(new MethodAutocompleteItemAdvance(item)
-                        {
-                            ImageIndex = 2,
-                            ToolTipTitle = element.Title,
-                            ToolTipText = element.ToolTipDescription()
-                        });
-                    }
-                    else
-                    {
-                        items.Add(new MethodAutocompleteItemAdvance(item)
-                        {
-                            ImageIndex = 2
-                        });
-                    }
-                }
-
-                _autoCompleteMenu.Items.SetAutocompleteItems(items);
-                _autoCompleteMenu.Items.MaximumSize =
-                    new Size(_autoCompleteMenu.Items.Width + 20, _autoCompleteMenu.Items.Height);
-                _autoCompleteMenu.Items.Width = _autoCompleteMenu.Items.Width + 20;
-            }
-            else
-            {
-                _autoCompleteMenu.Items.SetAutocompleteItems(new List<AutocompleteItem>());
-            }
-
-            ScriptEditor.Language = FastColoredTextBoxNS.Language.Razor;
+            AddHotkey(script);
+            _scriptList.Add(script);
+            RefreshAutoCompleteScripts();
+            return script;
         }
-
-        public class ToolTipDescriptions
+        public static void RemoveScript(RazorScript script)
         {
-            public string Title;
-            public string[] Parameters;
-            public string Returns;
-            public string Description;
-            public string Example;
-
-            public ToolTipDescriptions(string title, string[] parameter, string returns, string description,
-                string example)
-            {
-                Title = title;
-                Parameters = parameter;
-                Returns = returns;
-                Description = description;
-                Example = example;
-            }
-
-            public string ToolTipDescription()
-            {
-                string complete_description = string.Empty;
-
-                complete_description += "Parameter(s): ";
-
-                foreach (string parameter in Parameters)
-                    complete_description += "\n\t" + parameter;
-
-                complete_description += "\nDescription:";
-
-                complete_description += "\n\t" + Description;
-
-                complete_description += "\nExample(s):";
-
-                complete_description += "\n\t" + Example;
-
-                return complete_description;
-            }
+            RemoveHotkey(script);
+            _scriptList.Remove(script);
+            RefreshAutoCompleteScripts();
         }
-
-        public class MethodAutocompleteItemAdvance : MethodAutocompleteItem
-        {
-            string firstPart;
-            string lastPart;
-
-            public MethodAutocompleteItemAdvance(string text)
-                : base(text)
-            {
-                var i = text.LastIndexOf(' ');
-                if (i < 0)
-                    firstPart = text;
-                else
-                {
-                    firstPart = text.Substring(0, i);
-                    lastPart = text.Substring(i + 1);
-                }
-            }
-
-            public override CompareResult Compare(string fragmentText)
-            {
-                int i = fragmentText.LastIndexOf(' ');
-
-                if (i < 0)
-                {
-                    if (firstPart.StartsWith(fragmentText) && string.IsNullOrEmpty(lastPart))
-                        return CompareResult.VisibleAndSelected;
-                    //if (firstPart.ToLower().Contains(fragmentText.ToLower()))
-                    //  return CompareResult.Visible;
-                }
-                else
-                {
-                    var fragmentFirstPart = fragmentText.Substring(0, i);
-                    var fragmentLastPart = fragmentText.Substring(i + 1);
-
-
-                    if (firstPart != fragmentFirstPart)
-                        return CompareResult.Hidden;
-
-                    if (lastPart != null && lastPart.StartsWith(fragmentLastPart))
-                        return CompareResult.VisibleAndSelected;
-
-                    if (lastPart != null && lastPart.ToLower().Contains(fragmentLastPart.ToLower()))
-                        return CompareResult.Visible;
-                }
-
-                return CompareResult.Hidden;
-            }
-
-            public override string GetTextForReplace()
-            {
-                if (lastPart == null)
-                    return firstPart;
-
-                return firstPart + " " + lastPart;
-            }
-
-            public override string ToString()
-            {
-                if (lastPart == null)
-                    return firstPart;
-
-                return lastPart;
-            }
-        }
-
         public static void RedrawScripts()
         {
             ScriptTree.SafeAction(s =>
@@ -1213,140 +497,222 @@ namespace Assistant.Scripts
                 Recurse(s.Nodes, Config.GetUserDirectory("Scripts"));
                 s.EndUpdate();
                 s.Refresh();
-                s.Update();
             });
-
             RedrawScriptVariables();
+            RefreshAutoCompleteScripts();
         }
-
-        public static TreeNode GetScriptDirNode()
-        {
-            if (ScriptTree.SelectedNode == null)
-            {
-                return null;
-            }
-
-            if (ScriptTree.SelectedNode.Tag is string)
-                return ScriptTree.SelectedNode;
-                
-            if (!(ScriptTree.SelectedNode.Parent?.Tag is string))
-                return null;
-                
-            return ScriptTree.SelectedNode.Parent;
-        }
-
-        public static void AddScriptNode(TreeNode node)
-        {
-            if (node == null)
-            {
-                ScriptTree.Nodes.Add(node);
-            }
-            else
-            {
-                node.Nodes.Add(node);
-            }
-
-            ScriptTree.SelectedNode = node;
-        }
-
         private static void Recurse(TreeNodeCollection nodes, string path)
         {
             try
             {
-                var razorFiles = Directory.GetFiles(path, "*.razor");
-                razorFiles = razorFiles.OrderBy(fileName => fileName).ToArray();
-
-                foreach (var file in razorFiles)
+                foreach (var file in Directory.GetFiles(path, "*.razor").OrderBy(f => f))
                 {
-                    RazorScript script = null;
-
-                    foreach (RazorScript razorScript in _scriptList)
-                    {
-                        if (razorScript.Path.Equals(file))
-                        {
-                            script = razorScript;
-                            script.Lines = File.ReadAllLines(script.Path);
-                        }
-                    }
-
-                    if (script == null)
-                    {
-                        script = AddScript(file);
-                    }
-
-                    if (nodes != null)
-                    {
-                        TreeNode node = new TreeNode(script.Name)
-                        {
-                            Tag = script
-                        };
-
-                        nodes.Add(node);
-                    }
+                    RazorScript script = _scriptList.FirstOrDefault(r => r.Path.Equals(file)) ?? AddScript(file);
+                    if (nodes != null) nodes.Add(new TreeNode(script.Name) { Tag = script });
                 }
             }
-            catch
-            {
-                // ignored
-            }
-
+            catch { }
             try
             {
-
-                foreach (string directory in Directory.GetDirectories(path))
+                foreach (var dir in Directory.GetDirectories(path))
                 {
-                    if (!string.IsNullOrEmpty(directory) && !directory.Equals(".") && !directory.Equals(".."))
+                    if (!string.IsNullOrEmpty(dir) && !dir.EndsWith(".") && !dir.EndsWith(".."))
                     {
                         if (nodes != null)
                         {
-                            TreeNode node = new TreeNode($"[{Path.GetFileName(directory)}]")
-                            {
-                                Tag = directory
-                            };
-
-                            nodes.Add(node);
-
-                            Recurse(node.Nodes, directory);
+                            TreeNode d = new TreeNode($"[{Path.GetFileName(dir)}]") { Tag = dir };
+                            nodes.Add(d);
+                            Recurse(d.Nodes, dir);
                         }
-                        else
-                        {
-                            Recurse(null, directory);
-                        }
+                        else Recurse(null, dir);
                     }
                 }
             }
-            catch
+            catch { }
+        }
+        public static TreeNode GetScriptDirNode()
+        {
+            if (ScriptTree?.SelectedNode == null) return null;
+            if (ScriptTree.SelectedNode.Tag is string) return ScriptTree.SelectedNode;
+            if (!(ScriptTree.SelectedNode.Parent?.Tag is string)) return null;
+            return ScriptTree.SelectedNode.Parent;
+        }
+        public static void AddScriptNode(TreeNode node)
+        {
+            if (ScriptTree == null || node == null) return;
+            if (node.Tag is string) ScriptTree.Nodes.Add(node); else ScriptTree.SelectedNode?.Nodes.Add(node);
+            ScriptTree.SelectedNode = node;
+        }
+        #endregion
+
+        #region Play / Call
+        public static void PlayScript(string scriptName)
+        {
+            foreach (var rs in _scriptList)
+                if (rs.ToString().IndexOf(scriptName, StringComparison.OrdinalIgnoreCase) != -1)
+                { PlayScript(rs.Lines, scriptName); break; }
+        }
+        public static void PlayScript(string[] lines, string name)
+        {
+            if (World.Player == null || lines == null) return;
+            if (MacroManager.Playing || MacroManager.StepThrough) MacroManager.Stop();
+            StopScript(); EnableHighlight = false; SetVariableActive = false;
+            if (_queuedScript != null || !Client.Instance.ClientRunning) return;
+            try
             {
-                // ignored
+                Script script = new Script(Lexer.Lex(lines));
+                _queuedScript = script; _queuedScriptName = name;
+            }
+            catch (SyntaxError se)
+            { World.Player.SendMessage(MsgLevel.Error, $"{se.Message}: '{se.Line}' (Line #{se.LineNumber + 1})"); }
+        }
+        public static void PlayScriptFromUI(string[] lines, string name, bool highlight)
+        {
+            if (World.Player == null || ScriptEditor == null || lines == null) return;
+            EnableHighlight = highlight; if (EnableHighlight) ClearAllHighlightLines();
+            if (MacroManager.Playing || MacroManager.StepThrough) MacroManager.Stop();
+            StopScript(); SetVariableActive = false;
+            if (_queuedScript != null || !Client.Instance.ClientRunning) return;
+            try
+            {
+                Script script = new Script(Lexer.Lex(lines));
+                _queuedScript = script; _queuedScriptName = name;
+            }
+            catch (SyntaxError se)
+            {
+                World.Player.SendMessage(MsgLevel.Error, $"{se.Message}: '{se.Line}' (Line #{se.LineNumber + 1})");
+                if (EnableHighlight) SetHighlightLine(se.LineNumber, HighlightType.Error);
             }
         }
+        public static void CallScript(string[] lines, string name)
+        {
+            if (World.Player == null || lines == null || !Client.Instance.ClientRunning) return;
+            try
+            {
+                Script newScript = new Script(Lexer.Lex(lines));
+                // Push current script so we can resume after callee finishes
+                if (_activeScriptName != null && !_isScriptCall)
+                {
+                    Interpreter.PushCall(Interpreter.GetActiveScript(), _activeScriptName);
+                    // Suspend the caller so the callee can start on next tick
+                    Interpreter.SuspendScript();
+                }
+                _isScriptCall = true;
+                _queuedScript = newScript;
+                _queuedScriptName = name;
+            }
+            catch (SyntaxError se)
+            {
+                World.Player.SendMessage(MsgLevel.Error, $"{se.Message}: '{se.Line}' (Line #{se.LineNumber + 1})");
+                _isScriptCall = false;
+            }
+        }
+        public static void ReturnFromCall()
+        {
+            if (Interpreter.HasCalls)
+            {
+                Script callingScript = Interpreter.PopCall();
+                if (callingScript != null)
+                { _queuedScript = callingScript; _queuedScriptName = "Returning from call"; ScriptRunning = true; }
+            }
+            else StopScript();
+        }
+        #endregion
 
+        #region Highlight helpers
+        private static void AddHighlightLine(int iline, HighlightType type) { HighlightLines[type].Add(iline); RefreshHighlightLines(); }
+        private static void SetHighlightLine(int iline, HighlightType type) { ClearHighlightLine(type); AddHighlightLine(iline, type); }
+        public static void ClearHighlightLine(HighlightType type) { HighlightLines[type].Clear(); RefreshHighlightLines(); }
+        public static void ClearAllHighlightLines() { foreach (var t in GetHighlightTypes()) HighlightLines[t].Clear(); RefreshHighlightLines(); }
+        private static void RefreshHighlightLines()
+        {
+            if (ScriptEditor == null) return;
+            for (int i = 0; i < ScriptEditor.LinesCount; i++) ScriptEditor[i].BackgroundBrush = ScriptEditor.BackBrush;
+            foreach (var kv in HighlightLines) foreach (int line in kv.Value) ScriptEditor[line].BackgroundBrush = HighlightLineColors[kv.Key];
+            ScriptEditor.Invalidate();
+        }
+        private static void UpdateLineNumber(int lineNum)
+        {
+            if (!EnableHighlight) return;
+            SetHighlightLine(lineNum, HighlightType.Execution);
+            ScriptEditor.Selection.Start = new Place(0, lineNum);
+            ScriptEditor.DoSelectionVisible();
+        }
+        #endregion
+
+        #region Variables / UI
+        public static void RedrawScriptVariables()
+        {
+            ScriptVariableList?.SafeAction(s =>
+            {
+                s.BeginUpdate(); s.Items.Clear();
+                foreach (var kv in ScriptVariables.Variables) s.Items.Add($"{kv.Key} ({kv.Value})");
+                s.EndUpdate();
+            });
+        }
+        public static void SetEditor(FastColoredTextBox editor)
+        {
+            ScriptEditor = editor; InitScriptEditor(); if (SelectedScript != null) SetEditorText(SelectedScript);
+        }
+        public static RazorScript SelectedScript { get; set; }
+        public static void SetEditorText(RazorScript selected)
+        {
+            SelectedScript = selected;
+            ScriptEditor.Text = string.Join("\n", SelectedScript.Lines);
+            ApplyFullSyntaxHighlight();
+        }
+        public static void SetControls(FastColoredTextBox editor, TreeView tree, ListBox vars)
+        {
+            ScriptEditor = editor; ScriptTree = tree; ScriptVariableList = vars; 
+            InitScriptEditor();
+        }
+        public static void OnLogin()
+        {
+            Commands.Register(); AgentCommands.Register(); SpeechCommands.Register(); TargetCommands.Register();
+            Aliases.Register(); Expressions.Register(); Timer.Start();
+        }
+        public static void OnLogout()
+        {
+            StopScript(); Timer.Stop(); Assistant.Engine.MainWindow.LockScriptUI(false);
+        }
+        public static void StartEngine() => Timer.Start();
+        public static string GetCurrentScriptName() => _activeScriptName ?? _queuedScriptName;
+        #endregion
+
+        #region Misc helpers
+        private static void AddHotkey(RazorScript script) => HotKey.Add(HKCategory.Scripts, HKSubCat.None, Language.Format(LocString.PlayScript, script), OnHotKey, script);
+        private static void RemoveHotkey(RazorScript script) => HotKey.Remove(Language.Format(LocString.PlayScript, script.ToString()));
+        public static void OnHotKey(ref object state) { var script = (RazorScript)state; PlayScript(script.Lines, script.Name); }
+        public static bool AddToScript(string command)
+        {
+            if (!Recording) return false;
+            ScriptEditor?.AppendText(command + Environment.NewLine); return true;
+        }
+        public static void Error(bool quiet, string statement, string message, bool throwError = false)
+        { if (!quiet) World.Player?.SendMessage(MsgLevel.Error, $"{statement}: {message}"); }
+        public static List<ASTNode> ParseArguments(ref ASTNode node)
+        { var list = new List<ASTNode>(); while (node != null) { list.Add(node); node = node.Next(); } return list; }
         public static void GetGumpInfo(string[] param)
         {
             Targeting.OneTimeTarget(OnGetItemInfoTarget);
             Client.Instance.SendToClient(new UnicodeMessage(0xFFFFFFFF, -1, MessageType.Regular, 0x3B2, 3,
                 Language.CliLocName, "System", "Select an item or mobile to view/inspect"));
         }
-
         private static void OnGetItemInfoTarget(bool ground, Serial serial, Point3D pt, ushort gfx)
         {
             Item item = World.FindItem(serial);
-
             if (item == null)
             {
-                Mobile mobile = World.FindMobile(serial);
-
-                if (mobile == null)
-                    return;
-
-                MobileInfoGump gump = new MobileInfoGump(mobile);
-                gump.SendGump();
+                Mobile mobile = World.FindMobile(serial); if (mobile == null) return; new ItemInfoGump(item).SendGump();
             }
-            else
-            {
-                ItemInfoGump gump = new ItemInfoGump(item);
-                gump.SendGump();
-            }
+            else new ItemInfoGump(item).SendGump();
+        }
+        #endregion
+
+        // Provide public accessor for all scripts (required by Commands.cs)
+        public static List<RazorScript> GetAllScripts()
+        {
+            return _scriptList ?? new List<RazorScript>();
         }
     }
 }

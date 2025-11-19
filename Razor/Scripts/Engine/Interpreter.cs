@@ -1563,11 +1563,11 @@ namespace Assistant.Scripts.Engine
             _activeScript = null;
             _currentScope = _scope;
             _executionState = ExecutionState.RUNNING;
-            _callStack.Clear(); // Clear any pending calls
+    _callStack.Clear(); // Clear any pending calls
    
             if (_timeoutCallback != null)
-            {
-                if (_timeoutCallback())
+   {
+              if (_timeoutCallback())
      {
       ClearTimeout();
        }
@@ -1575,14 +1575,25 @@ namespace Assistant.Scripts.Engine
          _timeoutCallback = null;
    }
             
-      OnStop?.Invoke();
+   OnStop?.Invoke();
       }
+
+      /// <summary>
+        /// Suspend the current script without clearing the call stack (used for 'call' command)
+        /// </summary>
+        public static void SuspendScript()
+        {
+            _activeScript = null;
+    // Don't clear the call stack!
+    // Don't reset currentScope - it will be reset when the new script starts
+        }
         
-        public static void PauseScript()
+    public static void PauseScript()
         {
             _pauseTimeout = DateTime.MaxValue.Ticks;
-            _executionState = ExecutionState.PAUSED;
+       _executionState = ExecutionState.PAUSED;
         }
+
         public static void ResumeScript()
         {
             _executionState = ExecutionState.RUNNING;
@@ -1678,6 +1689,15 @@ namespace Assistant.Scripts.Engine
 
             _pauseTimeout = 0;
             _executionState = ExecutionState.RUNNING;
+        }
+
+        /// <summary>
+        /// Abort only the current active script (used for early 'return').
+        /// Does not clear scopes or call stack; timer will resume caller.
+        /// </summary>
+        public static void AbortCurrentScript()
+        {
+            _activeScript = null;
         }
     }
 }

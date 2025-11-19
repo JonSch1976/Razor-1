@@ -658,19 +658,7 @@
     <None Include="packages.config" />
     <None Include="Razor.manifest" />
     <None Include="Scripts\DELIVERY_SUMMARY.md" />
-    <None Include="Scripts\example-combat.razor" />
-    <None Include="Scripts\example-heal.razor" />
-    <None Include="Scripts\example-meditate.razor" />
     <None Include="Scripts\QUICK_TEST_REFERENCE.md" />
-    <None Include="Scripts\test-call-return.razor" />
-    <None Include="Scripts\test-early-return.razor" />
-    <None Include="Scripts\test-helper.razor" />
-    <None Include="Scripts\test-nested-level1.razor" />
-    <None Include="Scripts\test-nested-level2.razor" />
-    <None Include="Scripts\test-simple-call.razor" />
-    <None Include="Scripts\test-variable-helper.razor" />
-    <None Include="Scripts\TEST_GUIDE.md" />
-    <None Include="Scripts\TEST_SUITE_SUMMARY.md" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\FastColoredTextBox\FastColoredTextBox.csproj">

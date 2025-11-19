@@ -1,0 +1,155 @@
+# Keep Me Alive - Standalone Version (No Script Calls)
+# Handles poison curing, healing potions, and bandaging with optimized logic
+
+while not dead
+    # Priority 1: Cure poison immediately
+    if poisoned
+   if findtype '3847' backpack as 'cure_pot'
+      overhead 'Curing poison!'
+    clearhands 'left'
+   dclick 'cure_pot'
+            pause 500
+            # Reequip shield after potion
+        if findtype '7026' backpack as 'shield'  # Bronze Shield
+        lift 'shield'
+            pause 600
+           drop 'self' LeftHand
+     pause 300
+            elseif findtype '7027' backpack as 'shield'  # Buckler
+    lift 'shield'
+  pause 600
+  drop 'self' LeftHand
+     pause 300
+ elseif findtype '7028' backpack as 'shield'  # Kite Shield
+      lift 'shield'
+         pause 600
+             drop 'self' LeftHand
+           pause 300
+      elseif findtype '7029' backpack as 'shield'  # Wooden Shield
+       lift 'shield'
+     pause 600
+          drop 'self' LeftHand
+                pause 300
+    elseif findtype '7030' backpack as 'shield'  # Heater Shield
+       lift 'shield'
+      pause 600
+      drop 'self' LeftHand
+         pause 300
+        elseif findtype '7031' backpack as 'shield'  # Metal Shield
+         lift 'shield'
+         pause 600
+                drop 'self' LeftHand
+                pause 300
+    endif
+        else
+            overhead 'Out of cure potions!' 38
+        endif
+    endif
+    
+    # Priority 2: Drink heal potion if critically low HP
+  if hp < 40
+     if findtype '3852' backpack as 'heal_pot'
+      overhead 'Drinking Heal Pot'
+   clearhands 'left'
+          dclick 'heal_pot'
+   pause 500
+            # Reequip shield after potion
+            if findtype '7026' backpack as 'shield'  # Bronze Shield
+                lift 'shield'
+         pause 600
+          drop 'self' LeftHand
+      pause 300
+            elseif findtype '7027' backpack as 'shield'  # Buckler
+lift 'shield'
+                pause 600
+            drop 'self' LeftHand
+       pause 300
+      elseif findtype '7028' backpack as 'shield'  # Kite Shield
+  lift 'shield'
+         pause 600
+      drop 'self' LeftHand
+   pause 300
+ elseif findtype '7029' backpack as 'shield'  # Wooden Shield
+        lift 'shield'
+   pause 600
+         drop 'self' LeftHand
+      pause 300
+            elseif findtype '7030' backpack as 'shield'  # Heater Shield
+      lift 'shield'
+          pause 600
+    drop 'self' LeftHand
+              pause 300
+            elseif findtype '7031' backpack as 'shield'  # Metal Shield
+         lift 'shield'
+     pause 600
+        drop 'self' LeftHand
+          pause 300
+   endif
+ else
+            overhead 'Out of heal potions!' 38
+     endif
+    endif
+    
+    # Priority 3: Use bandages if injured
+    if hp < maxhp
+        if findtype '3617' backpack as 'bandage'
+            overhead 'Applying bandage'
+        dclick 'bandage'
+        waitfortarget 1500
+            target 'self'
+            
+      # Wait for bandage to complete, but check for poison during healing
+    for 14
+        pause 1000
+                
+      # Check if health dropped critically low - need immediate heal potion
+   if hp < 40
+          if findtype '3852' backpack as 'heal_pot'
+        overhead 'Health critical during bandage! Using potion!'
+    clearhands 'left'
+       dclick 'heal_pot'
+    pause 500
+          # Reequip shield after emergency potion
+   if findtype '7026' backpack as 'shield'
+       lift 'shield'
+      pause 600
+        drop 'self' LeftHand
+    pause 300
+     endif
+        break
+     endif
+      endif
+             
+         # Check for poison during bandaging
+        if poisoned
+      if findtype '3847' backpack as 'cure_pot'
+           overhead 'Poison detected during bandaging!'
+           clearhands 'left'
+    dclick 'cure_pot'
+           pause 500
+ # Reequip shield after cure potion
+        if findtype '7026' backpack as 'shield'
+     lift 'shield'
+                pause 600
+           drop 'self' LeftHand
+         pause 300
+endif
+     break
+  endif
+            endif
+   
+          # Also check if we're fully healed to stop waiting
+            if hp = maxhp
+    overhead 'Fully healed!'
+        break
+          endif
+       endfor
+        else
+      overhead 'Out of bandages!' 38
+            pause 5000
+        endif
+    else
+        # Full HP, just wait a bit before next check
+        pause 1000
+    endif
+endwhile

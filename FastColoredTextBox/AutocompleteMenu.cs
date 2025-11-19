@@ -242,6 +242,7 @@ namespace FastColoredTextBoxNS
         int oldItemCount = 0;
         FastColoredTextBox tb;
         internal ToolTip toolTip = new ToolTip();
+        private ScriptPreviewTooltip scriptPreviewTooltip; // Custom rich tooltip
         System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
 
         internal bool AllowTabKey { get; set; }
@@ -305,6 +306,9 @@ namespace FastColoredTextBoxNS
             HoveredColor = Color.Red;
             ToolTipDuration = 3000;
             toolTip.Popup += ToolTip_Popup;
+            
+            // Initialize custom script preview tooltip
+            scriptPreviewTooltip = new ScriptPreviewTooltip();
 
             MouseDown += new MouseEventHandler(ListMouseDown);
 
@@ -336,6 +340,8 @@ namespace FastColoredTextBoxNS
             {
                 if (this.Visible)
                     DoSelectedVisible();
+                else
+                    HideScriptPreview(); // Hide preview when menu closes
             };
         }
 
@@ -356,6 +362,12 @@ namespace FastColoredTextBoxNS
             {
                 toolTip.Popup -= ToolTip_Popup;
                 toolTip.Dispose();
+            }
+            
+            if (scriptPreviewTooltip != null)
+            {
+                scriptPreviewTooltip.Dispose();
+                scriptPreviewTooltip = null;
             }
 
             if (tb != null)
@@ -378,7 +390,18 @@ namespace FastColoredTextBoxNS
         void SafetyClose()
         {
             if (Menu != null && !Menu.IsDisposed)
+            {
+                HideScriptPreview();
                 Menu.Close();
+            }
+        }
+        
+        private void HideScriptPreview()
+        {
+            if (scriptPreviewTooltip != null && !scriptPreviewTooltip.IsDisposed)
+            {
+                scriptPreviewTooltip.HideTooltip();
+            }
         }
 
         void tb_KeyPressed(object sender, KeyPressEventArgs e)
@@ -794,27 +817,47 @@ namespace FastColoredTextBoxNS
             {
                 toolTip.ToolTipTitle = null;
                 toolTip.SetToolTip(this, null);
+                HideScriptPreview();
                 return;
             }
 
-            if (this.Parent != null)
+            // Check if this is a script preview (title contains "Script:")
+            bool isScriptPreview = title != null && title.StartsWith("Script:");
+            
+            if (isScriptPreview && !string.IsNullOrEmpty(text))
             {
-                IWin32Window window = this.Parent ?? this;
-               /* Point location;
+                // Use rich tooltip for script previews
+                if (this.Parent != null && scriptPreviewTooltip != null)
+                {
+                    // Hide standard tooltip
+                    toolTip.SetToolTip(this, null);
+                    
+                    // Calculate tooltip position (to the right of the menu)
+                    Point screenPos = this.PointToScreen(new Point(this.Right, 0));
+                    screenPos.X += 5 + (Menu?.Left ?? 0);
+                    screenPos.Y += Menu?.Top ?? 0;
+                    
+                    // Show script preview with syntax highlighting
+                    scriptPreviewTooltip.ShowTooltip(text, screenPos, 500, 400);
+                }
+            }
+            else
+            {
+                // Use standard tooltip for non-script items
+                HideScriptPreview();
+                
+                if (this.Parent != null)
+                {
+                    IWin32Window window = this.Parent ?? this;
+                    var location = new Point(Right + 3 + Menu.Left, Menu.Top);
 
-                if ((this.PointToScreen(this.Location).X + MaxToolTipSize.Width + 105) <
-                    Screen.FromControl(this.Parent).WorkingArea.Right)
-                    location = new Point(Right + 5, 0);
-                else
-                    location = new Point(Left - 105 - MaximumSize.Width, 0);*/
-                var location = new Point(Right + 3 + Menu.Left, Menu.Top);
+                    if (string.IsNullOrEmpty(text))
+                        toolTip.ToolTipTitle = null;
+                    else
+                        toolTip.ToolTipTitle = title;
 
-                if (string.IsNullOrEmpty(text))
-                    toolTip.ToolTipTitle = null;
-                else
-                    toolTip.ToolTipTitle = title;
-
-                toolTip.Show(text, window, location.X, location.Y, ToolTipDuration);
+                    toolTip.Show(text, window, location.X, location.Y, ToolTipDuration);
+                }
             }
         }
 

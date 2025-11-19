@@ -34,6 +34,9 @@ namespace Assistant.Core
             MessageType type, ushort hue, ushort font, string lang, string sourceName,
             string text)
         {
+            // Always add the message to the journal first
+            Add(text);
+
             if (source == Serial.MinusOne && sourceName == "System")
             {
                 if (Config.GetBool("FilterSnoopMsg") && text.IndexOf(World.Player.Name) == -1 &&
@@ -51,11 +54,6 @@ namespace Assistant.Core
 
                 // Overhead message override
                 OverheadManager.DisplayOverheadMessage(text);
-            }
-
-            if (!source.IsValid || source == World.Player.Serial || source.IsItem)
-            {
-                Add(text);
             }
 
             if (Config.GetBool("FilterSystemMessages") && source == Serial.MinusOne || source == Serial.Zero)
