@@ -1699,5 +1699,45 @@ namespace Assistant.Scripts.Engine
         {
             _activeScript = null;
         }
+
+        /// <summary>
+        /// Store a return value on the current (top) call frame without popping it yet.
+        /// Called by the 'return' command implementation before aborting callee.
+        /// </summary>
+        public static void SetReturnValue(string value)
+        {
+            var frame = _callStack.Peek();
+            if (frame != null)
+            {
+                frame.ReturnValue = value;
+            }
+        }
+
+        /// <summary>
+        /// Pop the call frame, advance caller past call site and expose any return value via a global variable '_ret'.
+        /// </summary>
+        public static Script ResumeCallerFromReturn()
+        {
+            var frame = _callStack.Pop();
+            if (frame == null) return null;
+
+            var caller = frame.Script;
+            // Advance caller one statement (skipping the 'call' line)
+            caller.Advance();
+
+            // Publish return value (if any) as a global variable '_ret'
+            if (!string.IsNullOrEmpty(frame.ReturnValue))
+            {
+                SetVariable("_ret", frame.ReturnValue, true);
+            }
+            else
+            {
+                // Clear previous value if no new one
+                if (ExistAlias("_ret"))
+                    ClearAlias("_ret");
+            }
+
+            return caller;
+        }
     }
 }

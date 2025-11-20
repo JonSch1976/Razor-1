@@ -1739,10 +1739,17 @@ namespace Assistant.Scripts
         private static bool CallScript(string command, Variable[] vars, bool quiet, bool force)
         {
             if (vars.Length < 1)
-                throw new RunTimeError("Usage: call 'name of script'");
+                throw new RunTimeError("Usage: call 'name of script' [arg1] [arg2] ...");
 
             string scriptName = vars[0].AsString();
             World.Player?.SendMessage(MsgLevel.Debug, $"[CALL] Request to call script: '{scriptName}' depth={Interpreter.CallDepth}");
+
+            // Collect parameters (resolve variable values)
+            var paramList = new List<string>();
+            for (int i = 1; i < vars.Length; i++)
+            {
+                paramList.Add(vars[i].AsString());
+            }
 
             string Normalize(string s)
             {
@@ -1765,52 +1772,38 @@ namespace Assistant.Scripts
                 string name = rs.Name ?? string.Empty;
                 string display = rs.ToString() ?? string.Empty;
 
-                // Highest priority: exact name match (case-insensitive)
                 if (name.Equals(scriptName, StringComparison.OrdinalIgnoreCase))
-                {
-                    best = rs; bestScore = 100; break;
-                }
+                { best = rs; bestScore = 100; break; }
                 if (display.Equals(scriptName, StringComparison.OrdinalIgnoreCase))
-                {
-                    best = rs; bestScore = 95; break;
-                }
+                { best = rs; bestScore = 95; break; }
 
-                // Next: raw substring on display/name
                 int score = -1;
                 if (display.IndexOf(scriptName, StringComparison.OrdinalIgnoreCase) >= 0) score = Math.Max(score, 80);
                 if (name.IndexOf(scriptName, StringComparison.OrdinalIgnoreCase) >= 0) score = Math.Max(score, 75);
 
-                // Next: normalized contains
                 string nameNorm = Normalize(name);
                 string displayNorm = Normalize(display);
                 if ((!string.IsNullOrEmpty(nameNorm) && nameNorm.Contains(q)) || (!string.IsNullOrEmpty(displayNorm) && displayNorm.Contains(q)))
-                {
-                    score = Math.Max(score, 60);
-                }
+                { score = Math.Max(score, 60); }
 
-                // Bonus: path contains user hint substrings
                 string path = rs.Path ?? string.Empty;
                 if (score >= 0 && !string.IsNullOrEmpty(path) && path.IndexOf("Mining\\New Mining", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    score += 5;
-                }
+                { score += 5; }
 
                 if (score > bestScore)
-                {
-                    best = rs; bestScore = score;
-                }
+                { best = rs; bestScore = score; }
             }
 
             if (best != null)
             {
                 int len = best.Lines?.Length ?? 0;
-                World.Player?.SendMessage(MsgLevel.Debug, $"[CALL] Found script: '{best.Name}' (len={len}) path='{best.Path}'");
+                World.Player?.SendMessage(MsgLevel.Debug, $"[CALL] Found script: '{best.Name}' (len={len}) path='{best.Path}' args={paramList.Count}");
                 if (len == 0)
                 {
                     CommandHelper.SendWarning(command, $"Script '{best.Name}' is empty (0 lines).", quiet);
                 }
-                ScriptManager.CallScript(best.Lines, best.Name);
-                World.Player?.SendMessage(MsgLevel.Debug, $"[CALL] Queued '{best.Name}' for execution");
+                ScriptManager.CallScript(best.Lines, best.Name, paramList);
+                World.Player?.SendMessage(MsgLevel.Debug, $"[CALL] Queued '{best.Name}' for execution with {paramList.Count} args");
                 return true;
             }
 
@@ -1831,10 +1824,20 @@ namespace Assistant.Scripts
 
         private static bool ReturnFromCall(string command, Variable[] vars, bool quiet, bool force)
         {
+            // Optional: return [value]
+            string retVal = null;
+            if (vars.Length == 1)
+                retVal = vars[0].AsString();
+            else if (vars.Length > 1)
+                throw new RunTimeError("Usage: return [value]");
+
             World.Player?.SendMessage(MsgLevel.Debug, $"[RETURN] Early return requested (depth={Interpreter.CallDepth})");
-            // End current script execution immediately; timer tick will see inactive script and pop caller
+            if (retVal != null)
+                Interpreter.SetReturnValue(retVal);
+
+            // Abort current script; timer logic will resume caller automatically
             Interpreter.AbortCurrentScript();
-            return false; // signal no further processing of this line
+            return false;
         }
 
         private static readonly Dictionary<string, ushort> PotionList = new Dictionary<string, ushort>()

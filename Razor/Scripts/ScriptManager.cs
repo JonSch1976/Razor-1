@@ -586,20 +586,39 @@ namespace Assistant.Scripts
         }
         public static void CallScript(string[] lines, string name)
         {
+            CallScript(lines, name, null);
+        }
+        public static void CallScript(string[] lines, string name, List<string> parameters)
+        {
             if (World.Player == null || lines == null || !Client.Instance.ClientRunning) return;
             try
             {
+                // Guard against exceeding max depth
+                if (Interpreter.CallDepth >= ScriptCallStack.MaxDepth)
+                {
+                    World.Player?.SendMessage(MsgLevel.Error, $"Max call depth {ScriptCallStack.MaxDepth} reached. Call to '{name}' canceled.");
+                    return;
+                }
                 Script newScript = new Script(Lexer.Lex(lines));
-                // Push current script so we can resume after callee finishes
                 if (_activeScriptName != null && !_isScriptCall)
                 {
                     Interpreter.PushCall(Interpreter.GetActiveScript(), _activeScriptName);
-                    // Suspend the caller so the callee can start on next tick
                     Interpreter.SuspendScript();
                 }
                 _isScriptCall = true;
                 _queuedScript = newScript;
                 _queuedScriptName = name;
+                // Store parameters globally as arg0,arg1,... and argc
+                if (parameters != null)
+                {
+                    for (int i = 0; i < parameters.Count; i++)
+                        Interpreter.SetVariable($"arg{i}", parameters[i], true);
+                    Interpreter.SetVariable("argc", parameters.Count.ToString(), true);
+                }
+                else
+                {
+                    if (Interpreter.ExistAlias("argc")) Interpreter.ClearAlias("argc");
+                }
             }
             catch (SyntaxError se)
             {
