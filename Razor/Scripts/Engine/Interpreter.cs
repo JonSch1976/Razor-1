@@ -1497,33 +1497,27 @@ namespace Assistant.Scripts.Engine
         /// <summary>
         /// Push current script onto call stack for 'call' command
         /// </summary>
-   public static void PushCall(Script script, string scriptName)
- {
+        public static void PushCall(Script script, string scriptName)
+        {
             if (script != null)
-       {
-   _callStack.Push(script, scriptName);
- }
+            {
+                // Only push; let the normal ExecuteNext advance happen so we don't skip a line after return
+                _callStack.Push(script, scriptName);
+                // Removed manual script.Advance() to avoid double-advancing (was skipping first real line in callee after nested call)
+            }
         }
 
-   /// <summary>
+        /// <summary>
         /// Return from called script back to calling script
-   /// </summary>
-  public static Script PopCall()
-  {
-       if (!_callStack.HasCalls)
-            {
-    return null;
-    }
+        /// </summary>
+        public static Script PopCall()
+        {
+            if (!_callStack.HasCalls)
+                return null;
 
-       var frame = _callStack.Pop();
-            if (frame != null)
-   {
-        // Return the calling script so it can be resumed
-    return frame.Script;
-      }
-          
-     return null;
-    }
+            var frame = _callStack.Pop();
+            return frame?.Script;
+        }
 
         /// <summary>
         /// Get current call depth
@@ -1563,29 +1557,27 @@ namespace Assistant.Scripts.Engine
             _activeScript = null;
             _currentScope = _scope;
             _executionState = ExecutionState.RUNNING;
-    _callStack.Clear(); // Clear any pending calls
-   
-            if (_timeoutCallback != null)
-   {
-              if (_timeoutCallback())
-     {
-      ClearTimeout();
-       }
+            _callStack.Clear();
 
-         _timeoutCallback = null;
-   }
-            
-   OnStop?.Invoke();
-      }
+            if (_timeoutCallback != null)
+            {
+                if (_timeoutCallback())
+                {
+                    ClearTimeout();
+                }
+
+                _timeoutCallback = null;
+            }
+
+            OnStop?.Invoke();
+        }
 
       /// <summary>
         /// Suspend the current script without clearing the call stack (used for 'call' command)
         /// </summary>
         public static void SuspendScript()
         {
-            _activeScript = null;
-    // Don't clear the call stack!
-    // Don't reset currentScope - it will be reset when the new script starts
+            _activeScript = null; // caller paused until callee finishes
         }
         
     public static void PauseScript()
@@ -1639,6 +1631,11 @@ namespace Assistant.Scripts.Engine
 
             if (!_activeScript.ExecuteNext())
             {
+                // Script finished normally - clean up its scopes
+                while (_currentScope != _scope)
+                {
+                    PopScope();
+                }
                 _activeScript = null;
                 return false;
             }
@@ -1698,6 +1695,12 @@ namespace Assistant.Scripts.Engine
         public static void AbortCurrentScript()
         {
             _activeScript = null;
+            // Clean up any remaining scopes from the aborted script
+            // Pop scopes until we're back at the global scope
+            while (_currentScope != _scope)
+            {
+                PopScope();
+            }
         }
     }
 }

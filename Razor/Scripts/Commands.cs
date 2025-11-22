@@ -1810,8 +1810,9 @@ namespace Assistant.Scripts
                     CommandHelper.SendWarning(command, $"Script '{best.Name}' is empty (0 lines).", quiet);
                 }
                 ScriptManager.CallScript(best.Lines, best.Name);
-                World.Player?.SendMessage(MsgLevel.Debug, $"[CALL] Queued '{best.Name}' for execution");
-                return true;
+                World.Player?.SendMessage(MsgLevel.Debug, $"[CALL] Queued '{best.Name}' for execution (blocking caller)");
+                // Return FALSE to block the calling script until the called script finishes
+                return false;
             }
 
             CommandHelper.SendWarning(command, $"Script '{scriptName}' not found", quiet);

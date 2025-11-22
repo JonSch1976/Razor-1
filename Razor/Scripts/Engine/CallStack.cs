@@ -24,93 +24,81 @@ namespace Assistant.Scripts.Engine
     /// <summary>
     /// Manages script call stack for subroutine calls
     /// </summary>
- public class ScriptCallStack
+    public class ScriptCallStack
     {
-      private readonly Stack<ScriptCallFrame> _callStack = new Stack<ScriptCallFrame>();
+        private readonly Stack<ScriptCallFrame> _callStack = new Stack<ScriptCallFrame>();
 
-     /// <summary>
+        /// <summary>
         /// Push a new script call onto the stack
         /// </summary>
         public void Push(Script callingScript, string scriptName)
-   {
-        var frame = new ScriptCallFrame
-     {
-           Script = callingScript,
-         ScriptName = scriptName,
-        Line = callingScript.CurrentLine
-       };
+        {
+            var frame = new ScriptCallFrame
+            {
+                Script = callingScript,
+                ScriptName = scriptName,
+                Line = callingScript.CurrentLine
+            };
 
-          _callStack.Push(frame);
-     
-       Logger.Debug($"[ScriptCallStack] Pushed '{scriptName}' onto call stack (depth: {_callStack.Count})");
+            _callStack.Push(frame);
+            Logger.Debug($"[ScriptCallStack] Pushed '{scriptName}' (line {frame.Line}) depth={_callStack.Count}");
         }
 
         /// <summary>
         /// Pop the most recent call from the stack
         /// </summary>
-   public ScriptCallFrame Pop()
-    {
-    if (_callStack.Count == 0)
-         {
-      Logger.Warning("[ScriptCallStack] Attempted to pop empty call stack");
-  return null;
+        public ScriptCallFrame Pop()
+        {
+            if (_callStack.Count == 0)
+            {
+                Logger.Warning("[ScriptCallStack] Pop on empty stack");
+                return null;
             }
 
             var frame = _callStack.Pop();
-            Logger.Debug($"[ScriptCallStack] Popped '{frame.ScriptName}' from call stack (depth: {_callStack.Count})");
-            
+            Logger.Debug($"[ScriptCallStack] Popped '{frame.ScriptName}' depth={_callStack.Count}");
             return frame;
-    }
+        }
 
         /// <summary>
         /// Check if there are any calls on the stack
         /// </summary>
-    public bool HasCalls => _callStack.Count > 0;
+        public bool HasCalls => _callStack.Count > 0;
 
-   /// <summary>
-      /// Get the current call depth
+        /// <summary>
+        /// Get the current call depth
         /// </summary>
         public int Depth => _callStack.Count;
 
         /// <summary>
-      /// Clear the entire call stack
+        /// Clear the entire call stack
         /// </summary>
         public void Clear()
-     {
+        {
             if (_callStack.Count > 0)
-            {
-    Logger.Debug($"[ScriptCallStack] Clearing call stack (depth: {_callStack.Count})");
-            }
-       _callStack.Clear();
-      }
-
-    /// <summary>
-        /// Peek at the top of the stack without removing
-        /// </summary>
-        public ScriptCallFrame Peek()
-      {
-            return _callStack.Count > 0 ? _callStack.Peek() : null;
-  }
+                Logger.Debug($"[ScriptCallStack] Clearing stack depth={_callStack.Count}");
+            _callStack.Clear();
+        }
     }
 
-  /// <summary>
+    /// <summary>
     /// Represents a single frame in the script call stack
     /// </summary>
     public class ScriptCallFrame
- {
+    {
         /// <summary>
         /// The script that made the call
- /// </summary>
+        /// </summary>
         public Script Script { get; set; }
 
         /// <summary>
-    /// Name of the script being called
+        /// Name of the script being called
         /// </summary>
         public string ScriptName { get; set; }
 
         /// <summary>
-        /// Line number where the call was made
-      /// </summary>
-     public int Line { get; set; }
+        /// Line number where the call was made (for diagnostics)
+        /// </summary>
+        public int Line { get; set; }
     }
 }

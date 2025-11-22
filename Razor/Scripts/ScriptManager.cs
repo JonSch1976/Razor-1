@@ -29,6 +29,7 @@ using Assistant.Scripts.Engine;
 using Assistant.UI;
 using FastColoredTextBoxNS;
 using System.Text.RegularExpressions;
+using Assistant.Core.Logging;
 
 namespace Assistant.Scripts
 {
@@ -162,11 +163,21 @@ namespace Assistant.Scripts
                     {
                         if (ScriptRunning)
                         {
+                            // If a call is pending (callee queued), do not treat as finished or pop the call yet.
+                            // This happens right after 'call' suspends the caller; the callee will start next tick.
+                            if (_isScriptCall && _queuedScript != null)
+                            {
+                                return;
+                            }
+
                             if (Interpreter.HasCalls)
                             {
                                 Script callingScript = Interpreter.PopCall();
                                 if (callingScript != null)
                                 {
+                                    // IMPORTANT: Advance the caller past the 'call' statement
+                                    // so it doesn't re-execute it when resuming
+                                    callingScript.Advance();
                                     _queuedScript = callingScript;
                                     _queuedScriptName = "Returning from call";
                                     return;
@@ -229,15 +240,31 @@ namespace Assistant.Scripts
  // Also load optional CUO scripts tree if present (e.g., UORenaissance\Razor\CUO\Scripts)
  try
  {
- var cuoScriptsPath = System.IO.Path.Combine(Assistant.Engine.RootPath, "UORenaissance", "Razor", "CUO", "Scripts");
- if (System.IO.Directory.Exists(cuoScriptsPath))
+ // Try multiple potential paths for UORenaissance scripts
+ string[] possiblePaths = new[]
  {
- Recurse(null, cuoScriptsPath);
+ System.IO.Path.Combine(Assistant.Engine.RootPath, "UORenaissance", "Razor", "CUO", "Scripts"),
+ System.IO.Path.Combine(Assistant.Engine.RootPath, "..", "UORenaissance", "Razor", "CUO", "Scripts"),
+ System.IO.Path.Combine(Assistant.Engine.RootPath, "..", "..", "UORenaissance", "Razor", "CUO", "Scripts"),
+ System.IO.Path.Combine(Assistant.Engine.RootPath, "..", "..", "..", "UORenaissance", "Razor", "CUO", "Scripts"),
+ System.IO.Path.Combine(Assistant.Engine.RootPath, "..", "..", "..", "..", "UORenaissance", "Razor", "CUO", "Scripts"),
+ System.IO.Path.Combine(Assistant.Engine.RootPath, "..", "..", "..", "..", "..", "UORenaissance", "Razor", "CUO", "Scripts")
+ };
+
+ foreach (var cuoScriptsPath in possiblePaths)
+ {
+ var normalizedPath = System.IO.Path.GetFullPath(cuoScriptsPath);
+ if (System.IO.Directory.Exists(normalizedPath))
+ {
+ Recurse(null, normalizedPath);
+ Logger.Debug($"[ScriptManager] Loaded CUO scripts from: {normalizedPath}");
+ break; // Only load from first valid path found
  }
  }
- catch
+ }
+ catch (Exception ex)
  {
- // ignore optional path failures
+ Logger.Warning($"[ScriptManager] Failed to load CUO scripts: {ex.Message}");
  }
  
  foreach (var type in GetHighlightTypes()) HighlightLines[type] = new List<int>();
@@ -587,19 +614,34 @@ namespace Assistant.Scripts
         public static void CallScript(string[] lines, string name)
         {
             if (World.Player == null || lines == null || !Client.Instance.ClientRunning) return;
+            
+            World.Player?.SendMessage(MsgLevel.Debug, $"[CallScript] Starting call to '{name}', activeScript={_activeScriptName}, Running={ScriptRunning}");
+            
             try
             {
                 Script newScript = new Script(Lexer.Lex(lines));
-                // Push current script so we can resume after callee finishes
-                if (_activeScriptName != null && !_isScriptCall)
+                
+                // Get the currently active script from the interpreter
+                var activeScript = Interpreter.GetActiveScript();
+                
+                if (activeScript != null && ScriptRunning)
                 {
-                    Interpreter.PushCall(Interpreter.GetActiveScript(), _activeScriptName);
-                    // Suspend the caller so the callee can start on next tick
+                    World.Player?.SendMessage(MsgLevel.Debug, $"[CallScript] Pushing active script '{_activeScriptName}' onto call stack");
+                    
+                    // Push the currently executing script onto the call stack WITHOUT advancing
+                    // The normal ExecuteNext() will handle advancing after the current line executes
+                    Interpreter.PushCall(activeScript, _activeScriptName ?? "Unknown");
+                    
+                    // Suspend the current script (sets _activeScript to null in Interpreter)
                     Interpreter.SuspendScript();
                 }
+                
+                // Queue the new script to run next
                 _isScriptCall = true;
                 _queuedScript = newScript;
                 _queuedScriptName = name;
+                
+                World.Player?.SendMessage(MsgLevel.Debug, $"[CallScript] Queued '{name}' for execution");
             }
             catch (SyntaxError se)
             {
